@@ -201,8 +201,8 @@ async def stop_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         shown += f" и ещё {len(words) - 80}"
     text = (f"🚫 <b>Стоп-слова</b>: {onoff(chat['stop_on'])}\n"
             f"Действие: {STOP_ACTIONS.get(chat['stop_action'], chat['stop_action'])}\n\n"
-            "Сравниваю без учёта регистра, ё и е, латинских двойников букв, повторов («плохоооой») и знаков "
-            "между буквами («п.л.о.х.о»). Слово ловится и с окончаниями. Проверяю и отредактированные сообщения.\n\n"
+            "Сравниваю без учёта регистра, ё и е, латинских двойников букв, повторов (плохоооой) и знаков "
+            "между буквами (п.л.о.х.о). Слово ловится и с окончаниями. Проверяю и отредактированные сообщения.\n\n"
             f"Слова ({len(words)}): <tg-spoiler>{shown}</tg-spoiler>")
     return text, kb(
         btn("Выключить" if chat["stop_on"] else "Включить", f"g:sw:{chat_id}:on", accent=True),
@@ -220,7 +220,7 @@ async def spam_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
             f"Действие: {SPAM_ACTIONS.get(chat['spam_action'], chat['spam_action'])}\n\n"
             "Не трогаю админов, модераторов бота, белый список и доверенных у Бакси.\n"
             "Ловлю: ссылки на сайты (кроме разрешённых доменов), приглашения в чужие чаты, ссылки на каналы "
-            "и ботов, упоминания @каналов, пересылки, кнопки-ссылки, типовой скам (заработок, «пиши в лс», "
+            "и ботов, упоминания @каналов, пересылки, кнопки-ссылки, типовой скам (заработок, 'пиши в лс', "
             "раздачи, кошельки, номера карт). Новичкам (первые 24 часа или первые 5 сообщений) "
             "нельзя никаких ссылок.\n\n"
             f"Нейросеть для спорных случаев: {ai_line}\n"
@@ -515,7 +515,7 @@ async def set_log_chat(bot: Bot, message: Message, chat_id: int) -> str:
         return "вы должны быть админом в том чате или канале."
     chat = await db.get_chat(chat_id)
     try:
-        await bot.send_message(target, out.head(f"сюда будет идти журнал чата «{chat['title'] or chat_id}»."))
+        await bot.send_message(target, out.head(f"сюда будет идти журнал чата \"{chat['title'] or chat_id}\"."))
     except TelegramAPIError as exc:
         return f"не могу туда писать: {out.esc(exc.message)}. Добавьте меня админом с правом публиковать."
     await db.set_chat(chat_id, log_chat_id=target)

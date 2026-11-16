@@ -24,7 +24,7 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/opt/baxi-guard/data
-MemoryHigh=130M
+MemoryHigh=135M
 MemoryMax=150M
 
 [Install]

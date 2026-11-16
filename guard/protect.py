@@ -162,7 +162,7 @@ async def stop_reason(chat: dict, message: Message) -> str:
         return ""
     words = await db.stopwords(chat["chat_id"])
     hit = find_stopword(message_text(message), words)
-    return f"стоп-слово «{hit}»" if hit else ""
+    return f"стоп-слово \"{hit}\"" if hit else ""
 
 
 # ---------- наказание ----------
