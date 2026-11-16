@@ -83,6 +83,11 @@ async def role(bot: Bot, chat_id: int, user_id: int) -> str:
     return MEMBER
 
 
+async def can_configure(bot: Bot, chat_id: int, user_id: int) -> bool:
+    """Настройки чата в ЛС: админ с правом ограничивать, создатель, владелец (модераторам бота нельзя)."""
+    return await role(bot, chat_id, user_id) in (ADMIN, CREATOR, OWNER)
+
+
 async def can_moderate(bot: Bot, chat_id: int, user_id: int) -> bool:
     return _RANK[await role(bot, chat_id, user_id)] >= 1
 
