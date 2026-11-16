@@ -336,6 +336,23 @@ async def cmd_del(message: Message, chat_row: dict, allowed: bool) -> None:
                          reason=(rt.text or rt.caption or "")[:100])
 
 
+# ---------- режим атаки ----------
+
+@router.message(Command("attack"))
+async def cmd_attack(message: Message, chat_row: dict, allowed: bool) -> None:
+    """Включить или выключить режим атаки. /attack 1h: на час (без времени: как в настройках)."""
+    if not await gate(message, chat_row, allowed, RESTRICT):
+        return
+    from guard import protect
+    drop_command(message, chat_row)
+    if chat_row["attack_until"] > db.now():
+        await protect.attack_off(message.bot, message.chat.id, by_id=actor_id(message))
+        return
+    args = parse_args(message.text or "", has_reply=True, with_time=True)
+    minutes = (args.seconds // 60) if args.seconds else 0
+    await protect.attack_on(message.bot, message.chat.id, by_id=actor_id(message), minutes=min(minutes, 24 * 60))
+
+
 # ---------- белый список и модераторы бота (только создатель чата и владелец) ----------
 
 async def creator_gate(message: Message, chat_row: dict, allowed: bool) -> bool:

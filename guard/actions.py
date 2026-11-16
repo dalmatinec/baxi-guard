@@ -47,12 +47,15 @@ def _tg_error(exc: TelegramAPIError) -> ActionError:
 
 
 async def record(bot: Bot, chat: dict, user_id: int, by_id: int, kind: str, *, until: int = 0, reason: str = "",
-                 link: str = "", warns: int = 0) -> None:
-    """Записать действие в журнал."""
+                 link: str = "", warns: int = 0, quiet: bool = False) -> None:
+    """Записать действие в журнал (база), продублировать строкой в чат журнала. quiet: только в базу."""
     try:
         await db.log_action(chat["chat_id"], user_id, by_id, kind, until, reason)
     except Exception:
         log.exception("Не записал действие в журнал")
+    if not quiet:
+        from guard import journal
+        await journal.post(bot, chat, user_id, by_id, kind, until=until, reason=reason, link=link, warns=warns)
 
 
 # ---------- мут ----------
@@ -105,15 +108,14 @@ async def unban(bot: Bot, chat: dict, user_id: int, by_id: int, reason: str = ""
 
 
 async def kick(bot: Bot, chat: dict, user_id: int, by_id: int, reason: str = "", link: str = "",
-               log_it: bool = True) -> None:
+               quiet: bool = False) -> None:
     """Выгнать без бана: бан и сразу разбан, человек может вернуться по ссылке."""
     try:
         await bot.ban_chat_member(chat["chat_id"], user_id)
         await bot.unban_chat_member(chat["chat_id"], user_id, only_if_banned=True)
     except TelegramAPIError as exc:
         raise _tg_error(exc) from exc
-    if log_it:
-        await record(bot, chat, user_id, by_id, "kick", reason=reason, link=link)
+    await record(bot, chat, user_id, by_id, "kick", reason=reason, link=link, quiet=quiet)
 
 
 # ---------- предупреждения ----------

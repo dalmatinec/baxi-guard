@@ -1,4 +1,4 @@
-"""Фоновые дела раз в минуту: чистка журнала старше 90 дней (раз в сутки)."""
+"""Фоновые дела каждые 30 секунд: выключить режим атаки по времени, раз в сутки чистить журнал старше 90 дней."""
 
 import asyncio
 import logging
@@ -12,6 +12,10 @@ TICK = 30
 
 
 async def tick(bot: Bot) -> None:
+    from guard import protect
+    for chat in await db.all_chats():  # режим атаки сам выключается по времени
+        if 0 < chat["attack_until"] <= db.now():
+            await protect.attack_off(bot, chat["chat_id"], auto=True)
     last = int(await db.kv_get("cleanup_at", "0") or 0)
     if db.now() - last > 86400:
         removed = await db.cleanup()
