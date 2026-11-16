@@ -38,6 +38,7 @@ async def home() -> tuple[str, InlineKeyboardMarkup]:
             f"За сутки: {stats_line(st)}\n\n"
             f"<b>Здоровье</b>\nработает {h['uptime']}, память {h['rss']:.0f} МБ, база {h['db']:.1f} МБ\n"
             f"API Бакси: {baxi_state}, в очереди событий: {h['outbox']}\n"
+            f"Свой API: {h['api']}\n"
             f"Нейросеть: {ai}\n"
             f"Правило оплаты: {'нужен оплаченный Бакси или своя подписка' if config.GUARD_NEEDS_BAXI_PAID else 'работает везде'}")
     return text, kb([btn("💬 Все чаты", "a:chats:0", accent=True), btn("🔄 Обновить", "a:home:0")])

@@ -8,7 +8,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import ChatPermissions
 
-from guard import db
+from guard import baxi, db
 from guard.parse import FOREVER, human_for
 
 log = logging.getLogger(__name__)
@@ -48,11 +48,13 @@ def _tg_error(exc: TelegramAPIError) -> ActionError:
 
 async def record(bot: Bot, chat: dict, user_id: int, by_id: int, kind: str, *, until: int = 0, reason: str = "",
                  link: str = "", warns: int = 0, quiet: bool = False) -> None:
-    """Записать действие в журнал (база), продублировать строкой в чат журнала. quiet: только в базу."""
+    """Записать действие в журнал (база), продублировать строкой в чат журнала и отправить событие Бакси.
+    quiet: только в базу и Бакси, без строки в чат журнала (например, кики режима атаки)."""
     try:
         await db.log_action(chat["chat_id"], user_id, by_id, kind, until, reason)
     except Exception:
         log.exception("Не записал действие в журнал")
+    baxi.emit(kind, chat, user_id, by_id, until, reason, warns if kind in ("warn", "unwarn") else None)
     if not quiet:
         from guard import journal
         await journal.post(bot, chat, user_id, by_id, kind, until=until, reason=reason, link=link, warns=warns)

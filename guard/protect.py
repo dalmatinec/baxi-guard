@@ -52,7 +52,8 @@ def is_system(message: Message) -> bool:
 
 async def trusted(bot: Bot, chat_id: int, user_id: int) -> bool:
     """Доверенные у Бакси (админы и VIP): их автоматика не трогает."""
-    return False
+    from guard import baxi
+    return baxi.configured() and user_id in await baxi.trusted(chat_id)
 
 
 async def staff(bot: Bot, message: Message) -> bool:

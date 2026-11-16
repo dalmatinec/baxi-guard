@@ -6,7 +6,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from guard import VERSION, config, db, handlers, scheduler
+from guard import VERSION, api, baxi, config, db, handlers, scheduler
 from guard.commands import set_commands
 from guard.middlewares import ChatTracker
 from guard.out import sanitize_requests
@@ -33,6 +33,7 @@ async def main() -> None:
     log.info("Модератор @%s запущен, версия %s", me.username, VERSION)
     await set_commands(bot)
 
+    runner = await api.start()  # внутренний API для Бакси, только 127.0.0.1
     tasks = [asyncio.create_task(scheduler.run(bot))]
     try:
         await bot.delete_webhook(drop_pending_updates=False)
@@ -40,6 +41,9 @@ async def main() -> None:
     finally:
         for t in tasks:
             t.cancel()
+        if runner is not None:
+            await runner.cleanup()
+        await baxi.close()
         await db.close()
         await bot.session.close()
 

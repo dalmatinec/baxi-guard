@@ -36,4 +36,9 @@ def db_mb() -> float:
 
 
 async def snapshot() -> dict:
-    return {"uptime": uptime(), "rss": rss_mb(), "db": db_mb(), "outbox": await db.outbox_size()}
+    from guard import baxi
+    return {"uptime": uptime(), "rss": rss_mb(), "db": db_mb(), "outbox": await db.outbox_size(),
+            "baxi": baxi.describe(), "api": api_state}
+
+
+api_state = "не запущен"  # меняет guard.api при старте
