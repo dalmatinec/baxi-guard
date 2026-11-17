@@ -92,6 +92,27 @@
 `GUARD_NEEDS_BAXI_PAID=1`: работать только там, где Бакси оплачен или на пробном, либо есть своя подписка
 (владелец: /admin → чат → Своя подписка). Если Бакси не отвечает, чат считается разрешённым.
 
+## Тестовый стенд (сначала здесь)
+
+Копия Бакси из ветки с правками и модератор на тестовых токенах, рядом с боевыми, ничего у них не трогая:
+свои папки (`/opt/baxi-test`, `/opt/baxi-guard-test`), свои базы, свои сервисы (`baxi-test`, `baxi-guard-test`),
+свои порты (8720, 8721), свой ключ API. Боевой токен скрипт не примет.
+
+```bash
+git clone -b guard-v1 https://github.com/dalmatinec/baxi-guard /opt/baxi-guard-test
+bash /opt/baxi-guard-test/deploy/test-stand.sh install   # спросит два тестовых токена, твой ID, ключ ИИ
+```
+
+| Что | Команда |
+|---|---|
+| Свежий код из веток | `bash /opt/baxi-guard-test/deploy/test-stand.sh update` |
+| Живы ли | `bash /opt/baxi-guard-test/deploy/test-stand.sh status` |
+| Логи обоих | `bash /opt/baxi-guard-test/deploy/test-stand.sh logs` |
+| Остановить | `bash /opt/baxi-guard-test/deploy/test-stand.sh stop` |
+| Снести стенд | `bash /opt/baxi-guard-test/deploy/test-stand.sh remove` |
+
+После утверждения ветки сливаются, и боевые обновляются как обычно (ниже).
+
 ## Установка на сервер
 
 Сначала тестовый бот и тестовая группа, живые чаты не трогать.
