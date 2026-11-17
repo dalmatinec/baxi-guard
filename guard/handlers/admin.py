@@ -1,25 +1,27 @@
-"""/admin владельца бота: все чаты, сводка действий за сутки, здоровье бота, своя подписка чатов."""
+"""/admin владельца бота: сводка, все чаты, здоровье бота, своя подписка чатов, премиум-эмодзи."""
 
+import json
 from datetime import datetime
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from guard import access, config, db, health, out, perms
-from guard.ui import btn, kb
+from guard.ui import DIV, back, btn, chat_title, grid, kb, row, screen
 
 router = Router(name="admin")
 router.message.filter(F.chat.type == "private")
 
-STAT_NAMES = [("mute", "мутов"), ("warn", "предупреждений"), ("ban", "банов"), ("kick", "киков"),
-              ("spam", "спама удалено"), ("delete", "удалено руками")]
+STAT_NAMES = [("mute", "🔇"), ("warn", "⚠️"), ("ban", "⛔"), ("kick", "👢"), ("spam", "🧹"), ("delete", "🗑")]
+EMOJI_KEY = "emoji_pack"
+P_ADMIN = "🛠 Админка"
 
 
 def stats_line(st: dict) -> str:
-    parts = [f"{name} {st.get(k, 0)}" for k, name in STAT_NAMES]
-    return ", ".join(parts)
+    return " · ".join(f"{icon} {st.get(k, 0)}" for k, icon in STAT_NAMES)
 
 
 async def home() -> tuple[str, InlineKeyboardMarkup]:
@@ -29,35 +31,38 @@ async def home() -> tuple[str, InlineKeyboardMarkup]:
         allowed += await access.allowed(c)
     st = await db.stats(None, db.now() - 86400)
     h = await health.snapshot()
-    ai = "нет ключа" if not config.AI_API_KEY else \
-        f"сегодня {await db.kv_get('ai_used:' + datetime.now(config.TZ).strftime('%Y-%m-%d'), '0')} из " \
-        f"{config.AI_DAILY_LIMIT}"
-    baxi_state = h.get("baxi", "не настроен")
-    text = (f"🛠 <b>Админка модератора</b>\n\n"
-            f"Чатов: {len(chats)}, работает в {allowed}\n"
-            f"За сутки: {stats_line(st)}\n\n"
-            f"<b>Здоровье</b>\nработает {h['uptime']}, память {h['rss']:.0f} МБ, база {h['db']:.1f} МБ\n"
-            f"API Бакси: {baxi_state}, в очереди событий: {h['outbox']}\n"
-            f"Свой API: {h['api']}\n"
-            f"Нейросеть: {ai}\n"
-            f"Правило оплаты: {'нужен оплаченный Бакси или своя подписка' if config.GUARD_NEEDS_BAXI_PAID else 'работает везде'}")
-    return text, kb([btn("💬 Все чаты", "a:chats:0", accent=True), btn("🔄 Обновить", "a:home:0")])
+    if config.AI_API_KEY:
+        used = await db.kv_get("ai_used:" + datetime.now(config.TZ).strftime("%Y-%m-%d"), "0")
+        ai = f"{used} из {config.AI_DAILY_LIMIT} сегодня"
+    else:
+        ai = "нет ключа"
+    rule = "нужен оплаченный Бакси или своя подписка" if config.GUARD_NEEDS_BAXI_PAID else "работает везде"
+    lines = [row("💬", "Чатов", str(len(chats)), f"работает в {allowed}"),
+             row("📊", "За сутки", stats_line(st)),
+             "",
+             "<b>Здоровье</b>",
+             row("⏱", "Работает", h["uptime"]),
+             row("🧠", "Память", f"{h['rss']:.0f} МБ", f"база {h['db']:.1f} МБ"),
+             row("🔌", "API Бакси", h.get("baxi", "не настроен"), f"очередь {h['outbox']}"),
+             row("📡", "Свой API", h["api"]),
+             row("🤖", "Нейросеть", ai),
+             row("💳", "Правило", rule),
+             row("✨", "Премиум-эмодзи", str(len(out.PACK)))]
+    return (screen(P_ADMIN, lines),
+            kb([btn("💬 Все чаты", "a:chats:0", accent=True), btn("✨ Эмодзи", "a:emoji")],
+               btn("🔄 Обновить", "a:home:0")))
 
 
 async def chats_list() -> tuple[str, InlineKeyboardMarkup]:
     chats = await db.all_chats()
-    since = db.now() - 86400
-    counts = {r["chat_id"]: r["n"] for r in await db.active_chats_since(since)}
-    lines, rows = [], []
+    counts = {r["chat_id"]: r["n"] for r in await db.active_chats_since(db.now() - 86400)}
+    lines, buttons = [], []
     for c in chats[:60]:
-        ok = await access.allowed(c)
-        mark = "🟢" if ok else "⚪"
-        title = c["title"] or str(c["chat_id"])
-        lines.append(f"{mark} {out.esc(title)}: действий за сутки {counts.get(c['chat_id'], 0)}")
-        rows.append(btn(f"{mark} {title[:38]}", f"g:c:{c['chat_id']}"))
-    rows.append(btn("⬅️ Админка", "a:home:0"))
-    text = "💬 <b>Все чаты</b>\n" + ("\n".join(lines) if lines else "пока ни одного")
-    return text, kb(*rows)
+        mark = "🟢" if await access.allowed(c) else "⚪"
+        lines.append(f"{mark} {chat_title(c)} · действий за сутки {counts.get(c['chat_id'], 0)}")
+        buttons.append(btn(f"{mark} {(c['title'] or str(c['chat_id']))[:30]}", f"g:c:{c['chat_id']}"))
+    return (screen("💬 Все чаты", lines or ["пока ни одного"], path=P_ADMIN, note="🟢 работает · ⚪ не активен"),
+            kb(*grid(buttons, 1), back("a:home:0")))
 
 
 def own_label(chat: dict) -> str:
@@ -72,34 +77,104 @@ def own_label(chat: dict) -> str:
 async def sub_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     chat = await db.ensure_chat(chat_id)
     _ok, mode = await access.status(chat)
-    text = (f"🔑 <b>Своя подписка</b>: {out.esc(chat['title'] or str(chat_id))}\n"
-            f"Сейчас: {own_label(chat)}\nРежим: {out.esc(mode)}\n\n"
-            "Нужна, только если в .env стоит GUARD_NEEDS_BAXI_PAID=1: тогда модератор работает в чатах, где Бакси "
-            "оплачен или на пробном, и в чатах со своей подпиской.")
+    lines = [row("🔑", "Своя подписка", own_label(chat)), row("⚡", "Режим", out.esc(mode))]
+    text = screen("🔑 Своя подписка", lines, path=f"⚙️ {chat_title(chat)}",
+                  note="Нужна, только если в .env стоит GUARD_NEEDS_BAXI_PAID=1: тогда модератор работает там, "
+                       "где Бакси оплачен или на пробном, и в чатах со своей подпиской.")
     return text, kb([btn("+30 дней", f"a:sub:{chat_id}:30", accent=True), btn("Навсегда", f"a:sub:{chat_id}:inf")],
-                    btn("Снять", f"a:sub:{chat_id}:off"), btn("⬅️ К чату", f"g:c:{chat_id}"))
+                    btn("Снять", f"a:sub:{chat_id}:off"), back(f"g:in:{chat_id}"))
 
+
+# ---------- премиум-эмодзи ----------
+
+async def load_pack() -> None:
+    try:
+        pairs = json.loads(await db.kv_get(EMOJI_KEY, "[]") or "[]")
+    except ValueError:
+        pairs = []
+    out.set_pack([(str(i), str(a)) for i, a in pairs])
+
+
+async def save_pack(pairs: list[tuple[str, str]]) -> None:
+    await db.kv_set(EMOJI_KEY, json.dumps(pairs, ensure_ascii=False))
+    out.set_pack(pairs)
+
+
+def emoji_screen() -> tuple[str, InlineKeyboardMarkup]:
+    shown = " ".join(out.PACK) or "пока нет"
+    text = screen("✨ Премиум-эмодзи", [row("✨", "В наборе", str(len(out.PACK))), "", shown], path=P_ADMIN,
+                  note="Пришлите сообщение с премиум-эмодзи: каждый заменит свой обычный двойник во всех "
+                       "сообщениях и на кнопках бота (например, 🛡 в заголовках). Нужен Telegram Premium "
+                       "у владельца бота.")
+    return text, kb([btn("➕ Добавить", "a:emoji:add", accent=True), btn("🗑 Очистить", "a:emoji:clr")],
+                    back("a:home:0"))
+
+
+def extract_custom(message: Message) -> list[tuple[str, str]]:
+    """Премиум-эмодзи из сообщения: [(id, обычный эмодзи)]. Смещения Telegram считает в UTF-16."""
+    text = message.text or message.caption or ""
+    raw = text.encode("utf-16-le")
+    found = []
+    for ent in message.entities or message.caption_entities or []:
+        if ent.type == "custom_emoji" and ent.custom_emoji_id:
+            alt = raw[ent.offset * 2:(ent.offset + ent.length) * 2].decode("utf-16-le", "ignore")
+            if alt:
+                found.append((ent.custom_emoji_id, alt))
+    return found
+
+
+async def on_emoji_input(message: Message, state: FSMContext) -> None:
+    if not perms.is_owner(message.from_user.id):
+        await state.clear()
+        return
+    found = extract_custom(message)
+    if not found:
+        await message.answer("В сообщении нет премиум-эмодзи. Пришлите их ещё раз или /cancel")
+        return
+    pack = dict(out.PACK)
+    for emoji_id, alt in found:
+        pack[alt] = emoji_id
+    await save_pack([(i, a) for a, i in pack.items()])
+    await state.clear()
+    await message.answer(f"✅ Добавлено: {len(found)}")
+    text, markup = emoji_screen()
+    await message.answer(text, reply_markup=markup)
+
+
+# ---------- обработчики ----------
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message) -> None:
     if not perms.is_owner(message.from_user.id):
         return
     text, markup = await home()
-    await message.answer(text, reply_markup=markup, parse_mode="HTML")
+    await message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(F.data.startswith("a:"))
-async def on_admin(cb: CallbackQuery, bot: Bot) -> None:
+async def on_admin(cb: CallbackQuery, bot: Bot, state: FSMContext) -> None:
     if not perms.is_owner(cb.from_user.id):
         await cb.answer()
         return
     parts = cb.data.split(":")
-    screen = parts[1]
-    if screen == "home":
+    scr = parts[1]
+    if scr == "home":
         text, markup = await home()
-    elif screen == "chats":
+    elif scr == "chats":
         text, markup = await chats_list()
-    elif screen == "sub":
+    elif scr == "emoji":
+        op = parts[2] if len(parts) > 2 else ""
+        if op == "add":
+            from guard.handlers.settings import Input
+            await state.set_state(Input.waiting)
+            await state.update_data(kind="emoji", chat_id=0)
+            await cb.message.answer(f"✏️ Пришлите сообщение с премиум-эмодзи\n{DIV}\n<i>Отменить: /cancel</i>")
+            await cb.answer()
+            return
+        if op == "clr":
+            await save_pack([])
+        text, markup = emoji_screen()
+    elif scr == "sub":
         chat_id = int(parts[2])
         op = parts[3] if len(parts) > 3 else ""
         chat = await db.ensure_chat(chat_id)
@@ -115,7 +190,7 @@ async def on_admin(cb: CallbackQuery, bot: Bot) -> None:
         await cb.answer()
         return
     try:
-        await cb.message.edit_text(text, reply_markup=markup, parse_mode="HTML", link_preview_options=out.NO_PREVIEW)
+        await cb.message.edit_text(text, reply_markup=markup, link_preview_options=out.NO_PREVIEW)
     except TelegramBadRequest as exc:
         if "not modified" not in str(exc):
             raise

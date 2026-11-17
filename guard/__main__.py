@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from guard import VERSION, api, baxi, config, db, handlers, scheduler
@@ -22,7 +23,9 @@ async def main() -> None:
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 
     await db.connect()
-    bot = Bot(config.BOT_TOKEN)
+    from guard.handlers.admin import load_pack
+    await load_pack()  # премиум-эмодзи владельца
+    bot = Bot(config.BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     bot.session.middleware(sanitize_requests)  # никаких длинных тире и ёлочек ни в одном сообщении
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.outer_middleware(ChatTracker(count_messages=True))

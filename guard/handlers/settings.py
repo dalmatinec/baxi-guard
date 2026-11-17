@@ -1,4 +1,7 @@
-"""Личка: /start, мои чаты, карточка чата со всеми настройками модерации.
+"""Личка: /start, мои чаты и настройки каждого чата по категориям.
+
+Карточка чата → категории: 🛡 Защита (антиспам, стоп-слова, режим атаки), 🧹 Чистота, ⚠️ Наказания,
+👥 Доверие, 📜 Журнал, ℹ️ О чате. Строгий текстовый стиль из guard/ui.py.
 
 Кнопки: g:<экран>:<chat_id>[:<действие>[:<значение>]]. Права проверяются на каждое нажатие."""
 
@@ -17,7 +20,8 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from guard import access, config, db, out, perms
 from guard.links import normalize_domain
 from guard.parse import human_duration, human_for
-from guard.ui import btn, cycle, kb, onoff, toggle_text
+from guard.ui import DIV, back, btn, chat_title, check, cycle, grid, kb, row, screen
+from guard.ui import state as word
 
 log = logging.getLogger(__name__)
 router = Router(name="settings")
@@ -30,24 +34,33 @@ WARN_MODES = [("mute", 60), ("mute", 1440), ("mute", 10080), ("ban", 0)]
 WARN_TTLS = [0, 7, 14, 30, 60, 90]
 ATTACK_MINUTES = [15, 30, 60, 120]
 REPLY_TTLS = [0, 15, 30, 60, 300]
-SERVICE = [("svc_join", "вошёл в чат"), ("svc_leave", "вышел из чата"), ("svc_pin", "закрепил сообщение"),
-           ("svc_photo", "сменил фото чата"), ("svc_title", "сменил название чата")]
-SPAM_PARTS = [("spam_links", "ссылки и @каналы"), ("spam_forwards", "пересылки"), ("spam_buttons", "кнопки-ссылки"),
-              ("spam_scam", "скам-признаки"), ("spam_newbie", "строже к новичкам")]
+SERVICE = [("svc_join", "входы"), ("svc_leave", "выходы"), ("svc_pin", "закрепы"),
+           ("svc_photo", "фото чата"), ("svc_title", "название чата")]
+SPAM_PARTS = [("spam_links", "ссылки"), ("spam_forwards", "пересылки"), ("spam_buttons", "кнопки"),
+              ("spam_scam", "скам"), ("spam_newbie", "новички")]
 MAX_STOPWORDS = 500
 MAX_DOMAINS = 200
+
+P_PROTECT, P_CHATS = "🛡 Защита", "⚙️ Мои чаты"
 
 
 class Input(StatesGroup):
     waiting = State()  # в data: kind, chat_id
 
 
+# ---------- главное меню ----------
+
 def start_text() -> str:
-    return (f"<b>{out.HEAD}</b>\n\n"
-            "Навожу порядок в чатах: мут, бан, предупреждения, стоп-слова, антиспам, чистка служебных "
-            "сообщений и режим атаки. Участники меня не замечают, пока не нарушат.\n\n"
-            "Добавьте меня в чат администратором, потом включите нужные защиты в настройках. "
-            "Всё автоматическое по умолчанию выключено.")
+    return screen(out.HEAD, [
+        "Порядок в чатах без лишнего шума.",
+        "",
+        "🔗 антиспам и стоп-слова",
+        "🚨 защита от набегов",
+        "⚠️ предупреждения, муты, баны",
+        "🧹 чистка служебных сообщений",
+        "📜 журнал всех действий",
+    ], note="Добавьте бота в чат администратором и включите нужное в настройках. По умолчанию всё "
+            "автоматическое выключено.")
 
 
 async def add_url(bot: Bot) -> str:
@@ -58,35 +71,34 @@ async def add_url(bot: Bot) -> str:
 
 async def start_markup(bot: Bot, user_id: int) -> InlineKeyboardMarkup:
     rows = [btn("➕ Добавить в чат", url=await add_url(bot), accent=True),
-            [btn("⚙️ Мои чаты", "g:chats:0"), btn("📜 Команды", "g:help:0")]]
+            [btn("⚙️ Мои чаты", "g:chats:0"), btn("📖 Команды", "g:help:0")]]
     if perms.is_owner(user_id):
         rows.append(btn("🛠 Админка", "a:home:0"))
     return kb(*rows)
 
 
-HELP = (
-    "<b>Команды в чате</b> (для админов с правом ограничивать участников)\n\n"
-    "Цель: ответом на сообщение, или @username, или ID после команды.\n"
-    "Время: 30m, 2h, 3d, 1w. Причина: всё после времени.\n\n"
-    "/mute [время] [причина] - запретить писать, без времени на 1 час\n"
-    "/unmute - снять мут\n"
-    "/warn [причина] - предупреждение, на лимите мут или бан\n"
-    "/warns - предупреждения человека (ответом) или свои\n"
-    "/unwarn - снять последнее предупреждение\n"
-    "/ban [время] [причина] - бан, без времени навсегда\n"
-    "/unban - разбан\n"
-    "/kick - выгнать без бана\n"
-    "/del - удалить сообщение и команду\n"
-    "/pin, /unpin - закрепить, открепить\n"
-    "/link - ссылка-приглашение\n"
-    "/attack - режим атаки: выгонять всех новых\n"
-    "/whitelist - белый список (создатель чата)\n"
-    "/mod - модератор бота (создатель чата)\n"
-    "/settings - настройки в личке\n"
-    "/chat - ID чата и права бота\n"
-    "/v - пинг\n\n"
-    "Команда и ответ бота удаляются сами через несколько секунд, это настраивается."
-)
+HELP = screen("📖 Команды в чате", [
+    "Для админов с правом ограничивать участников и модераторов бота.",
+    "Кого: ответом, @username или ID. Время: 30m, 2h, 3d, 1w.",
+    "",
+    "<b>Наказания</b>",
+    "/mute [время] [причина] · мут, по умолчанию час",
+    "/warn [причина] · предупреждение",
+    "/ban [время] [причина] · бан, по умолчанию навсегда",
+    "/kick · выгнать без бана",
+    "/unmute · /unwarn · /unban · снять",
+    "/warns · предупреждения человека или свои",
+    "",
+    "<b>Чат</b>",
+    "/del · удалить сообщение",
+    "/pin · /unpin · закрепить, открепить",
+    "/link · ссылка-приглашение",
+    "/attack · режим атаки",
+    "",
+    "<b>Управление</b>",
+    "/whitelist · /mod · белый список и модераторы (создатель)",
+    "/settings · настройки · /chat · права бота · /v · пинг",
+], note="Команда и ответ бота сами исчезают через несколько секунд, это меняется в разделе Чистота.")
 
 
 # ---------- вход ----------
@@ -103,26 +115,59 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
         if chat_id and await perms.can_configure(message.bot, chat_id, message.from_user.id):
             await db.ensure_chat(chat_id)
             text, markup = await card(message.bot, chat_id, message.from_user.id)
-            await message.answer(text, reply_markup=markup, parse_mode="HTML", link_preview_options=out.NO_PREVIEW)
+            await message.answer(text, reply_markup=markup, link_preview_options=out.NO_PREVIEW)
             return
         await message.answer(out.head("настраивать этот чат могут только его админы с правом ограничивать "
                                       "участников."))
         return
-    await message.answer(start_text(), reply_markup=await start_markup(message.bot, message.from_user.id),
-                         parse_mode="HTML")
+    await message.answer(start_text(), reply_markup=await start_markup(message.bot, message.from_user.id))
 
 
 @router.message(Command("settings"))
 async def cmd_settings(message: Message, state: FSMContext) -> None:
     await state.clear()
     text, markup = await chats_screen(message.bot, message.from_user.id)
-    await message.answer(text, reply_markup=markup, parse_mode="HTML")
+    await message.answer(text, reply_markup=markup)
 
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(out.head("отменено."))
+
+
+# ---------- сводки ----------
+
+def attack_on(chat: dict) -> bool:
+    return chat["attack_until"] > db.now()
+
+
+def protect_count(chat: dict) -> int:
+    return sum(1 for v in (chat["spam_on"], chat["stop_on"], attack_on(chat) or chat["attack_auto"]) if v)
+
+
+def clean_count(chat: dict) -> tuple[int, int]:
+    on = sum(1 for k, _ in SERVICE if chat[k]) + (1 if chat["cmd_delete"] else 0) + (1 if chat["reply_ttl"] else 0)
+    return on, len(SERVICE) + 2
+
+
+def warn_mode_label(chat: dict) -> str:
+    if chat["warn_action"] == "ban":
+        return "бан"
+    return f"мут {human_for(chat['warn_mute_min'] * 60)}"
+
+
+def warn_summary(chat: dict) -> str:
+    return f"{chat['warn_limit']} → {warn_mode_label(chat)}"
+
+
+async def rights_line(bot: Bot, chat_id: int) -> str:
+    miss = await perms.missing_rights(bot, chat_id)
+    if miss is None:
+        return "⚠️ бот не администратор в чате"
+    if miss:
+        return "⚠️ не хватает прав: " + ", ".join(miss)
+    return "✅ права бота в порядке"
 
 
 # ---------- экраны ----------
@@ -133,64 +178,94 @@ async def my_chats(bot: Bot, user_id: int) -> list[dict]:
         return chats
     sem = asyncio.Semaphore(10)
 
-    async def check(c):
+    async def check_one(c):
         async with sem:
             return c if await perms.can_configure(bot, c["chat_id"], user_id) else None
-    return [c for c in await asyncio.gather(*(check(c) for c in chats[:200])) if c]
+    return [c for c in await asyncio.gather(*(check_one(c) for c in chats[:200])) if c]
 
 
 async def chats_screen(bot: Bot, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     chats = await my_chats(bot, user_id)
     if not chats:
-        return (out.head("чатов нет. Добавьте меня в чат администратором, и он появится здесь."),
-                kb(btn("➕ Добавить в чат", url=await add_url(bot), accent=True), btn("⬅️ Назад", "g:home:0")))
-    rows = [btn((c["title"] or str(c["chat_id"]))[:40], f"g:c:{c['chat_id']}") for c in chats[:50]]
-    rows.append(btn("⬅️ Назад", "g:home:0"))
-    return "⚙️ <b>Мои чаты</b>\nВыберите чат:", kb(*rows)
-
-
-def warn_mode_label(chat: dict) -> str:
-    if chat["warn_action"] == "ban":
-        return "бан"
-    return f"мут {human_for(chat['warn_mute_min'] * 60)}"
-
-
-def warn_summary(chat: dict) -> str:
-    ttl = f"сгорают через {chat['warn_ttl_days']} дн." if chat["warn_ttl_days"] else "не сгорают"
-    return f"лимит {chat['warn_limit']}, потом {warn_mode_label(chat)}, {ttl}"
-
-
-def attack_on(chat: dict) -> bool:
-    return chat["attack_until"] > db.now()
+        return (screen(P_CHATS, ["Пока пусто."], note="Добавьте бота в чат администратором, и чат появится здесь."),
+                kb(btn("➕ Добавить в чат", url=await add_url(bot), accent=True), back("g:home:0")))
+    lines, buttons = [], []
+    for c in chats[:50]:
+        mark = "🟢" if protect_count(c) else "⚪"
+        lines.append(f"{mark} {chat_title(c)} · защита {protect_count(c)}/3")
+        buttons.append(btn(f"{mark} {(c['title'] or str(c['chat_id']))[:30]}", f"g:c:{c['chat_id']}"))
+    return (screen(P_CHATS, lines, note="🟢 защита включена · ⚪ всё выключено"),
+            kb(*grid(buttons, 1), back("g:home:0")))
 
 
 async def card(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     chat = await db.ensure_chat(chat_id)
-    _ok, mode = await access.status(chat)
-    miss = await perms.missing_rights(bot, chat_id)
-    rights = ("я не администратор" if miss is None else ("не хватает: " + ", ".join(miss) if miss else "все есть"))
-    words = len(await db.stopwords(chat_id))
-    wl, doms, mods = len(await db.whitelist(chat_id)), len(await db.domains(chat_id)), len(await db.mods(chat_id))
-    svc = sum(1 for k, _ in SERVICE if chat[k])
-    log_to = f"<code>{chat['log_chat_id']}</code>" if chat["log_chat_id"] else "не задан"
-    text = (f"⚙️ <b>{out.esc(chat['title'] or str(chat_id))}</b>\n"
-            f"Режим: {out.esc(mode)}\nПрава бота: {rights}\n\n"
-            f"🛡 <b>Защита</b>\n"
-            f"Стоп-слова: {onoff(chat['stop_on'])}, слов {words}\n"
-            f"Антиспам: {onoff(chat['spam_on'])}\n"
-            f"Служебные: {svc} из {len(SERVICE)}\n"
-            f"Режим атаки: {onoff(attack_on(chat))}\n\n"
-            f"⚠️ Предупреждения: {warn_summary(chat)}\n"
-            f"👥 Белый список: {wl}, доменов {doms}, модераторов бота {mods}\n"
-            f"📜 Журнал: {log_to}")
-    rows = [[btn("🚫 Стоп-слова", f"g:sw:{chat_id}"), btn("🔗 Антиспам", f"g:sp:{chat_id}")],
-            [btn("🧹 Служебные", f"g:sv:{chat_id}"), btn("🚨 Режим атаки", f"g:at:{chat_id}")],
-            [btn("⚠️ Предупреждения", f"g:wr:{chat_id}"), btn("👥 Белый список", f"g:wl:{chat_id}")],
-            [btn("📜 Журнал", f"g:lg:{chat_id}"), btn("💬 Ответы бота", f"g:rp:{chat_id}")]]
-    if perms.is_owner(user_id):
-        rows.append(btn("🔑 Своя подписка (владелец)", f"a:sub:{chat_id}"))
-    rows.append(btn("⬅️ Мои чаты", "g:chats:0"))
+    ok, mode = await access.status(chat)
+    wl, mods = len(await db.whitelist(chat_id)), len(await db.mods(chat_id))
+    on, total = clean_count(chat)
+    lines = [
+        row("🛡", "Защита", f"{protect_count(chat)} из 3"),
+        row("🧹", "Чистота", f"{on} из {total}"),
+        row("⚠️", "Наказания", warn_summary(chat)),
+        row("👥", "Доверие", f"белый список {wl}", f"модераторы {mods}"),
+        row("📜", "Журнал", "подключён" if chat["log_chat_id"] else "только в базе"),
+    ]
+    footer = [await rights_line(bot, chat_id)]
+    if not ok:
+        footer.append(f"⏸ {out.esc(mode)}")
+    text = screen(f"⚙️ {chat_title(chat)}", lines, footer=footer)
+    rows = [[btn("🛡 Защита", f"g:pr:{chat_id}", accent=True), btn("🧹 Чистота", f"g:cl:{chat_id}")],
+            [btn("⚠️ Наказания", f"g:wr:{chat_id}"), btn("👥 Доверие", f"g:wl:{chat_id}")],
+            [btn("📜 Журнал", f"g:lg:{chat_id}"), btn("ℹ️ О чате", f"g:in:{chat_id}")],
+            back("g:chats:0", "⬅️ Мои чаты")]
     return text, kb(*rows)
+
+
+async def protect_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    chat = await db.get_chat(chat_id)
+    words = len(await db.stopwords(chat_id))
+    attack = "идёт" if attack_on(chat) else word(False)
+    lines = [
+        row("🔗", "Антиспам", word(chat["spam_on"]), SPAM_ACTIONS[chat["spam_action"]] if chat["spam_on"] else ""),
+        row("🚫", "Стоп-слова", word(chat["stop_on"]), f"слов {words}"),
+        row("🚨", "Режим атаки", attack, "авто" if chat["attack_auto"] else ""),
+    ]
+    text = screen(P_PROTECT, lines, path=f"⚙️ {chat_title(chat)}",
+                  note="Админов, модераторов бота, белый список и доверенных у Бакси автоматика не трогает.")
+    return text, kb([btn("🔗 Антиспам", f"g:sp:{chat_id}"), btn("🚫 Стоп-слова", f"g:sw:{chat_id}")],
+                    btn("🚨 Режим атаки", f"g:at:{chat_id}"), back(f"g:c:{chat_id}"))
+
+
+async def spam_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    chat = await db.get_chat(chat_id)
+    doms = len(await db.domains(chat_id))
+    caught = [name for k, name in SPAM_PARTS if chat[k]]
+    lines = [row("⚡", "Состояние", word(chat["spam_on"])),
+             row("🎯", "Действие", SPAM_ACTIONS[chat["spam_action"]]),
+             row("🔍", "Ловит", ", ".join(caught) or "ничего")]
+    lines.append(row("🌐", "Разрешённые домены", str(doms)))
+    if config.AI_API_KEY:
+        lines.append(row("🧠", "Нейросеть для спорных", word(chat["spam_ai"])))
+    text = screen("🔗 Антиспам", lines, path=P_PROTECT,
+                  note="Ссылки, приглашения в чужие чаты, @каналы и боты, пересылки, кнопки-ссылки, скам: "
+                       "заработок, 'пиши в лс', кошельки, карты. Новичкам первые сутки ссылки нельзя.")
+    toggles = [btn(check(chat[k], name), f"g:sp:{chat_id}:t:{k}") for k, name in SPAM_PARTS]
+    if config.AI_API_KEY:
+        toggles.append(btn(check(chat["spam_ai"], "нейросеть"), f"g:sp:{chat_id}:t:spam_ai"))
+    return text, kb(btn("Выключить" if chat["spam_on"] else "Включить", f"g:sp:{chat_id}:on", accent=True),
+                    btn(f"🎯 {SPAM_ACTIONS[chat['spam_action']]}", f"g:sp:{chat_id}:act"),
+                    *grid(toggles, 2), btn("🌐 Разрешённые домены", f"g:dm:{chat_id}"), back(f"g:pr:{chat_id}"))
+
+
+async def domains_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    doms = await db.domains(chat_id)
+    lines = [f"• {out.esc(d)}" for d in doms[:60]] or ["пусто"]
+    if len(doms) > 60:
+        lines.append(f"и ещё {len(doms) - 60}")
+    text = screen("🌐 Домены", lines, path="🔗 Антиспам",
+                  note="Ссылки на эти сайты и их поддомены антиспам пропускает. Новичкам ссылки нельзя всё равно.")
+    return text, kb([btn("➕ Добавить", f"g:dm:{chat_id}:add", accent=True), btn("➖ Убрать", f"g:dm:{chat_id}:del")],
+                    back(f"g:sp:{chat_id}"))
 
 
 async def stop_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -199,170 +274,161 @@ async def stop_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     shown = ", ".join(out.esc(w) for w in words[:80]) or "пусто"
     if len(words) > 80:
         shown += f" и ещё {len(words) - 80}"
-    text = (f"🚫 <b>Стоп-слова</b>: {onoff(chat['stop_on'])}\n"
-            f"Действие: {STOP_ACTIONS.get(chat['stop_action'], chat['stop_action'])}\n\n"
-            "Сравниваю без учёта регистра, ё и е, латинских двойников букв, повторов (плохоооой) и знаков "
-            "между буквами (п.л.о.х.о). Слово ловится и с окончаниями. Проверяю и отредактированные сообщения.\n\n"
-            f"Слова ({len(words)}): <tg-spoiler>{shown}</tg-spoiler>")
-    return text, kb(
-        btn("Выключить" if chat["stop_on"] else "Включить", f"g:sw:{chat_id}:on", accent=True),
-        btn(f"Действие: {STOP_ACTIONS.get(chat['stop_action'], '?')}", f"g:sw:{chat_id}:act"),
-        [btn("➕ Добавить", f"g:sw:{chat_id}:add"), btn("➖ Убрать", f"g:sw:{chat_id}:del")],
-        btn("🗑 Очистить список", f"g:sw:{chat_id}:clr"),
-        btn("⬅️ Назад", f"g:c:{chat_id}"))
-
-
-async def spam_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
-    chat = await db.get_chat(chat_id)
-    doms = await db.domains(chat_id)
-    ai_line = "нет ключа в .env" if not config.AI_API_KEY else onoff(chat["spam_ai"])
-    text = (f"🔗 <b>Антиспам</b>: {onoff(chat['spam_on'])}\n"
-            f"Действие: {SPAM_ACTIONS.get(chat['spam_action'], chat['spam_action'])}\n\n"
-            "Не трогаю админов, модераторов бота, белый список и доверенных у Бакси.\n"
-            "Ловлю: ссылки на сайты (кроме разрешённых доменов), приглашения в чужие чаты, ссылки на каналы "
-            "и ботов, упоминания @каналов, пересылки, кнопки-ссылки, типовой скам (заработок, 'пиши в лс', "
-            "раздачи, кошельки, номера карт). Новичкам (первые 24 часа или первые 5 сообщений) "
-            "нельзя никаких ссылок.\n\n"
-            f"Нейросеть для спорных случаев: {ai_line}\n"
-            f"Разрешённые домены: {len(doms)}")
-    rows = [btn("Выключить" if chat["spam_on"] else "Включить", f"g:sp:{chat_id}:on", accent=True),
-            btn(f"Действие: {SPAM_ACTIONS.get(chat['spam_action'], '?')}", f"g:sp:{chat_id}:act")]
-    parts = [btn(toggle_text(chat[k], name), f"g:sp:{chat_id}:t:{k}") for k, name in SPAM_PARTS]
-    rows += [parts[i:i + 2] for i in range(0, len(parts), 2)]
-    if config.AI_API_KEY:
-        rows.append(btn(toggle_text(chat["spam_ai"], "нейросеть для спорных"), f"g:sp:{chat_id}:t:spam_ai"))
-    rows += [btn("🌐 Разрешённые домены", f"g:dm:{chat_id}"), btn("⬅️ Назад", f"g:c:{chat_id}")]
-    return text, kb(*rows)
-
-
-async def domains_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
-    doms = await db.domains(chat_id)
-    shown = "\n".join(out.esc(d) for d in doms[:100]) or "пусто"
-    text = ("🌐 <b>Разрешённые домены</b>\nСсылки на них антиспам пропускает (с поддоменами). "
-            "Новичкам ссылки нельзя всё равно.\n\n" + shown)
-    return text, kb([btn("➕ Добавить", f"g:dm:{chat_id}:add"), btn("➖ Убрать", f"g:dm:{chat_id}:del")],
-                    btn("⬅️ Назад", f"g:sp:{chat_id}"))
-
-
-async def service_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
-    chat = await db.get_chat(chat_id)
-    text = "🧹 <b>Чистка служебных сообщений</b>\nУдаляю отмеченные сообщения Telegram о событиях в чате."
-    rows = [btn(toggle_text(chat[k], name), f"g:sv:{chat_id}:t:{k}") for k, name in SERVICE]
-    rows.append(btn("⬅️ Назад", f"g:c:{chat_id}"))
-    return text, kb(*rows)
+    lines = [row("⚡", "Состояние", word(chat["stop_on"])),
+             row("🎯", "Действие", STOP_ACTIONS[chat["stop_action"]]),
+             row("📝", "Слов", str(len(words))),
+             "", f"<tg-spoiler>{shown}</tg-spoiler>"]
+    text = screen("🚫 Стоп-слова", lines, path=P_PROTECT,
+                  note="Ловлю с окончаниями и обходы: регистр, ё/е, латинские буквы вместо русских, "
+                       "повторы и точки между буквами. Проверяю и правки сообщений.")
+    return text, kb(btn("Выключить" if chat["stop_on"] else "Включить", f"g:sw:{chat_id}:on", accent=True),
+                    btn(f"🎯 {STOP_ACTIONS[chat['stop_action']]}", f"g:sw:{chat_id}:act"),
+                    [btn("➕ Добавить", f"g:sw:{chat_id}:add"), btn("➖ Убрать", f"g:sw:{chat_id}:del")],
+                    btn("🗑 Очистить список", f"g:sw:{chat_id}:clr"), back(f"g:pr:{chat_id}"))
 
 
 async def attack_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     chat = await db.get_chat(chat_id)
     on = attack_on(chat)
-    left = ""
-    if on:
-        left = f", выключится через {human_duration(max(60, (chat['attack_until'] - db.now()) // 60 * 60))}"
-    text = (f"🚨 <b>Режим атаки</b>: {onoff(on)}{left}\n\n"
-            "Пока включён, каждого нового участника сразу выгоняю (без бана). Включается здесь или командой "
-            "/attack в чате, сам выключается через заданное время.\n\n"
-            f"Автовключение (больше 10 входов за минуту): {onoff(chat['attack_auto'])}\n"
-            f"Длительность: {chat['attack_minutes']} мин")
-    return text, kb(
-        btn("Выключить сейчас" if on else "Включить сейчас", f"g:at:{chat_id}:on", accent=True),
-        btn(toggle_text(chat["attack_auto"], "автовключение при набеге"), f"g:at:{chat_id}:auto"),
-        btn(f"Длительность: {chat['attack_minutes']} мин", f"g:at:{chat_id}:len"),
-        btn("⬅️ Назад", f"g:c:{chat_id}"))
+    now_line = "идёт, выключится через " + human_duration(max(60, (chat["attack_until"] - db.now()) // 60 * 60)) \
+        if on else "выключен"
+    lines = [row("⚡", "Сейчас", now_line),
+             row("🤖", "Автовключение", word(chat["attack_auto"]), "больше 10 входов в минуту"),
+             row("⏱", "Длительность", f"{chat['attack_minutes']} мин")]
+    text = screen("🚨 Режим атаки", lines, path=P_PROTECT,
+                  note="Пока режим идёт, каждого нового участника сразу выгоняю без бана. В чате: /attack.")
+    return text, kb(btn("Выключить сейчас" if on else "Включить сейчас", f"g:at:{chat_id}:on", accent=True),
+                    [btn(check(chat["attack_auto"], "авто"), f"g:at:{chat_id}:auto"),
+                     btn(f"⏱ {chat['attack_minutes']} мин", f"g:at:{chat_id}:len")],
+                    back(f"g:pr:{chat_id}"))
+
+
+async def clean_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    chat = await db.get_chat(chat_id)
+    svc = [name for k, name in SERVICE if chat[k]]
+    ttl = f"через {chat['reply_ttl']} сек" if chat["reply_ttl"] else "не удаляю"
+    lines = [row("🧹", "Служебные", ", ".join(svc) if svc else "не трогаю"),
+             row("⌨️", "Команды админов", "через 5 сек" if chat["cmd_delete"] else "не удаляю"),
+             row("💬", "Ответы бота", ttl)]
+    text = screen("🧹 Чистота", lines, path=f"⚙️ {chat_title(chat)}",
+                  note="Отмеченные служебные сообщения Telegram удаляю сразу.")
+    toggles = [btn(check(chat[k], name), f"g:cl:{chat_id}:t:{k}") for k, name in SERVICE]
+    return text, kb(*grid(toggles, 2),
+                    [btn(check(chat["cmd_delete"], "команды"), f"g:cl:{chat_id}:cmd"),
+                     btn(f"💬 {ttl}", f"g:cl:{chat_id}:ttl")],
+                    back(f"g:c:{chat_id}"))
 
 
 async def warns_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     chat = await db.get_chat(chat_id)
-    ttl = f"{chat['warn_ttl_days']} дн." if chat["warn_ttl_days"] else "не сгорают"
-    text = (f"⚠️ <b>Предупреждения</b>\nНа {chat['warn_limit']}-м предупреждении: {warn_mode_label(chat)}, "
-            "после этого счёт начинается заново.\n"
-            f"Срок жизни предупреждения: {ttl}")
-    return text, kb(
-        [btn("➖", f"g:wr:{chat_id}:lim:-1"), btn(f"Лимит: {chat['warn_limit']}", f"g:wr:{chat_id}"),
-         btn("➕", f"g:wr:{chat_id}:lim:1")],
-        btn(f"На лимите: {warn_mode_label(chat)}", f"g:wr:{chat_id}:mode", accent=True),
-        btn(f"Сгорают: {ttl}", f"g:wr:{chat_id}:ttl"),
-        btn("⬅️ Назад", f"g:c:{chat_id}"))
+    ttl = f"через {chat['warn_ttl_days']} дн." if chat["warn_ttl_days"] else "никогда"
+    lines = [row("🔢", "Лимит", f"{chat['warn_limit']} предупреждения" if chat["warn_limit"] < 5
+                 else f"{chat['warn_limit']} предупреждений"),
+             row("🎯", "На лимите", warn_mode_label(chat)),
+             row("⏳", "Сгорают", ttl)]
+    text = screen("⚠️ Наказания", lines, path=f"⚙️ {chat_title(chat)}",
+                  note="На лимите наказание срабатывает само, счёт начинается заново. Предупреждения выдают "
+                       "админы (/warn) и автоматика, если так настроено в защите.")
+    return text, kb([btn("➖", f"g:wr:{chat_id}:lim:-1"), btn(f"🔢 {chat['warn_limit']}", f"g:wr:{chat_id}"),
+                     btn("➕", f"g:wr:{chat_id}:lim:1")],
+                    btn(f"🎯 {warn_mode_label(chat)}", f"g:wr:{chat_id}:mode", accent=True),
+                    btn(f"⏳ сгорают: {ttl}", f"g:wr:{chat_id}:ttl"),
+                    back(f"g:c:{chat_id}"))
 
 
 def person(r: dict) -> str:
     return r["name"] or (("@" + r["username"]) if r["username"] else str(r["user_id"]))
 
 
-async def whitelist_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+async def trust_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    chat = await db.get_chat(chat_id)
     wl, mods = await db.whitelist(chat_id), await db.mods(chat_id)
     creator = await perms.is_creator(bot, chat_id, user_id)
-    text = ("👥 <b>Белый список</b>\nИм можно ссылки и пересылки. Добавляет создатель чата: ответом /whitelist "
-            "на сообщение человека.\n" + ("\n".join(f"• {out.esc(person(r))}" for r in wl) or "пусто") +
-            "\n\n<b>Модераторы бота</b>\nМогут пользоваться командами модерации без прав в Telegram. "
-            "Назначает создатель чата: ответом /mod.\n" +
-            ("\n".join(f"• {out.esc(person(r))}" for r in mods) or "нет"))
+    lines = [f"<b>Белый список</b> · {len(wl)}"]
+    lines += [f"• {out.esc(person(r))}" for r in wl[:30]] or ["пусто"]
+    lines += ["", f"<b>Модераторы бота</b> · {len(mods)}"]
+    lines += [f"• {out.esc(person(r))}" for r in mods[:20]] or ["нет"]
+    text = screen("👥 Доверие", lines, path=f"⚙️ {chat_title(chat)}",
+                  note="Белому списку можно ссылки и пересылки. Модераторы бота пользуются командами без прав "
+                       "в Telegram. Добавляет создатель чата в чате: ответом /whitelist или /mod.")
     rows = []
     if creator:
-        rows += [btn(f"❌ {person(r)[:30]}", f"g:wl:{chat_id}:rw:{r['user_id']}") for r in wl[:30]]
-        rows += [btn(f"❌ мод. {person(r)[:28]}", f"g:wl:{chat_id}:rm:{r['user_id']}") for r in mods[:20]]
-    rows.append(btn("⬅️ Назад", f"g:c:{chat_id}"))
-    return text, kb(*rows)
+        rows += grid([btn(f"❌ {person(r)[:22]}", f"g:wl:{chat_id}:rw:{r['user_id']}") for r in wl[:20]], 2)
+        rows += grid([btn(f"❌ мод {person(r)[:20]}", f"g:wl:{chat_id}:rm:{r['user_id']}") for r in mods[:10]], 2)
+    return text, kb(*rows, btn("🌐 Разрешённые домены", f"g:dm:{chat_id}"), back(f"g:c:{chat_id}"))
 
 
-KIND_NAMES = {"mute": "мут", "unmute": "снят мут", "warn": "предупреждение", "unwarn": "снято предупреждение",
-              "ban": "бан", "unban": "разбан", "kick": "кик", "delete": "удаление", "spam": "спам"}
+KIND_NAMES = {"mute": "🔇 мут", "unmute": "🔊 снят мут", "warn": "⚠️ предупреждение", "unwarn": "↩️ снято предупр.",
+              "ban": "⛔ бан", "unban": "✅ разбан", "kick": "👢 кик", "delete": "🗑 удалено", "spam": "🧹 спам"}
 
 
 async def log_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     chat = await db.get_chat(chat_id)
     items = await db.recent_actions(chat_id, 10)
-    lines = []
+    where = f"<code>{chat['log_chat_id']}</code>" if chat["log_chat_id"] else "только в базе"
+    lines = [row("📍", "Куда дублировать", where), "", "<b>Последние действия</b>"]
+    if not items:
+        lines.append("пока нет")
     for a in items:
         when = datetime.fromtimestamp(a["ts"], config.TZ).strftime("%d.%m %H:%M")
         name = await db.member_name(chat_id, a["user_id"]) or str(a["user_id"])
-        line = f"{when} {KIND_NAMES.get(a['kind'], a['kind'])}: {out.esc(name)}"
+        line = f"{when} {KIND_NAMES.get(a['kind'], a['kind'])} · {out.esc(name)}"
         if a["reason"]:
-            line += f" ({out.esc(a['reason'][:40])})"
+            line += f" · {out.esc(a['reason'][:30])}"
         lines.append(line)
-    where = f"<code>{chat['log_chat_id']}</code>" if chat["log_chat_id"] else "не задан, всё пишется только в базу"
-    text = (f"📜 <b>Журнал</b>\nКуда дублировать: {where}\n\n"
-            "Каждое действие пишется в базу (храню 90 дней). Если указать чат или канал, туда пойдёт короткая "
-            "строка: кто, кого, что, причина, ссылка.\n\n<b>Последние действия</b>\n" + ("\n".join(lines) or "пусто"))
+    text = screen("📜 Журнал", lines, path=f"⚙️ {chat_title(chat)}",
+                  note="Всё хранится 90 дней. В чат или канал журнала идёт строка на каждое действие.")
     rows = [btn("📍 Указать чат или канал", f"g:lg:{chat_id}:set", accent=True)]
     if chat["log_chat_id"]:
-        rows.append(btn("Отключить", f"g:lg:{chat_id}:off"))
-    rows.append(btn("⬅️ Назад", f"g:c:{chat_id}"))
-    return text, kb(*rows)
+        rows.append(btn("Отключить дубль", f"g:lg:{chat_id}:off"))
+    return text, kb(*rows, back(f"g:c:{chat_id}"))
 
 
-async def replies_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+async def info_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     chat = await db.get_chat(chat_id)
-    ttl = f"через {chat['reply_ttl']} сек" if chat["reply_ttl"] else "не удалять"
-    text = ("💬 <b>Ответы бота</b>\nЧтобы не засорять ленту, команда админа удаляется через 5 секунд, "
-            "а ответ бота через заданное время.\n\n"
-            f"Удалять команды: {onoff(chat['cmd_delete'])}\nУдалять ответы: {ttl}")
-    return text, kb(btn(toggle_text(chat["cmd_delete"], "удалять команды"), f"g:rp:{chat_id}:cmd"),
-                    btn(f"Ответы: {ttl}", f"g:rp:{chat_id}:ttl", accent=True),
-                    btn("⬅️ Назад", f"g:c:{chat_id}"))
+    ok, mode = await access.status(chat)
+    miss = await perms.missing_rights(bot, chat_id)
+    lines = [row("🆔", "ID", f"<code>{chat_id}</code>"),
+             row("⚡", "Режим", out.esc(mode) + ("" if ok else ", модерация не активна")),
+             "", "<b>Права бота</b>"]
+    if miss is None:
+        lines.append("⚠️ бот не администратор")
+    else:
+        lines += [f"{'❌' if name in miss else '✅'} {name}" for name in perms.RIGHTS.values()]
+    text = screen("ℹ️ О чате", lines, path=f"⚙️ {chat_title(chat)}")
+    rows = []
+    if perms.is_owner(user_id):
+        rows.append(btn("🔑 Своя подписка", f"a:sub:{chat_id}"))
+    return text, kb(*rows, back(f"g:c:{chat_id}"))
 
 
 # ---------- нажатия ----------
 
 async def show(cb: CallbackQuery, text: str, markup: InlineKeyboardMarkup) -> None:
     try:
-        await cb.message.edit_text(text, reply_markup=markup, parse_mode="HTML", link_preview_options=out.NO_PREVIEW)
+        await cb.message.edit_text(text, reply_markup=markup, link_preview_options=out.NO_PREVIEW)
     except TelegramBadRequest as exc:
         if "not modified" not in str(exc):
             raise
     await cb.answer()
 
 
-async def ask(cb: CallbackQuery, state: FSMContext, kind: str, chat_id: int, prompt: str) -> None:
-    await state.set_state(Input.waiting)
-    await state.update_data(kind=kind, chat_id=chat_id)
-    await cb.message.answer(out.head(prompt + "\nОтменить: /cancel"))
+async def ask(cb: CallbackQuery, fsm: FSMContext, kind: str, chat_id: int, prompt: str) -> None:
+    await fsm.set_state(Input.waiting)
+    await fsm.update_data(kind=kind, chat_id=chat_id)
+    await cb.message.answer(f"✏️ {prompt}\n{DIV}\n<i>Отменить: /cancel</i>")
     await cb.answer()
 
 
+def flip(chat: dict, key: str) -> dict:
+    return {key: 0 if chat[key] else 1}
+
+
 @router.callback_query(F.data.startswith("g:"))
-async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # noqa: C901
+    fsm = state
     parts = cb.data.split(":")
-    screen = parts[1]
+    scr = parts[1]
     try:
         chat_id = int(parts[2])
     except (IndexError, ValueError):
@@ -372,15 +438,15 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     arg = parts[4] if len(parts) > 4 else ""
     user_id = cb.from_user.id
 
-    if screen == "home":
-        await state.clear()
+    if scr == "home":
+        await fsm.clear()
         await show(cb, start_text(), await start_markup(bot, user_id))
         return
-    if screen == "help":
-        await show(cb, HELP, kb(btn("⬅️ Назад", "g:home:0")))
+    if scr == "help":
+        await show(cb, HELP, kb(back("g:home:0")))
         return
-    if screen == "chats":
-        await state.clear()
+    if scr == "chats":
+        await fsm.clear()
         await show(cb, *await chats_screen(bot, user_id))
         return
 
@@ -390,53 +456,59 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         return
     chat = await db.ensure_chat(chat_id)
 
-    if screen == "c":
+    if scr == "c":
         await show(cb, *await card(bot, chat_id, user_id))
+    elif scr == "pr":
+        await show(cb, *await protect_screen(chat_id))
 
-    elif screen == "sw":
+    elif scr == "sw":
         if op == "on":
-            await db.set_chat(chat_id, stop_on=0 if chat["stop_on"] else 1)
+            await db.set_chat(chat_id, **flip(chat, "stop_on"))
         elif op == "act":
             await db.set_chat(chat_id, stop_action=cycle(list(STOP_ACTIONS), chat["stop_action"]))
         elif op == "add":
-            await ask(cb, state, "stop_add", chat_id, "пришлите слова или фразы через запятую или с новой строки.")
+            await ask(cb, fsm, "stop_add", chat_id, "Пришлите слова или фразы через запятую или с новой строки.")
             return
         elif op == "del":
-            await ask(cb, state, "stop_del", chat_id, "пришлите слова, которые убрать, через запятую.")
+            await ask(cb, fsm, "stop_del", chat_id, "Пришлите слова, которые убрать, через запятую.")
             return
         elif op == "clr":
             if arg != "yes":
-                await show(cb, "Очистить весь список стоп-слов?",
+                await show(cb, screen("🗑 Очистить стоп-слова?", ["Весь список удалится."], path=P_PROTECT),
                            kb([btn("Да, очистить", f"g:sw:{chat_id}:clr:yes"), btn("Нет", f"g:sw:{chat_id}")]))
                 return
             await db.clear_stopwords(chat_id)
         await show(cb, *await stop_screen(chat_id))
 
-    elif screen == "sp":
+    elif scr == "sp":
         if op == "on":
-            await db.set_chat(chat_id, spam_on=0 if chat["spam_on"] else 1)
+            await db.set_chat(chat_id, **flip(chat, "spam_on"))
         elif op == "act":
             await db.set_chat(chat_id, spam_action=cycle(list(SPAM_ACTIONS), chat["spam_action"]))
         elif op == "t" and arg in {k for k, _ in SPAM_PARTS} | {"spam_ai"}:
-            await db.set_chat(chat_id, **{arg: 0 if chat[arg] else 1})
+            await db.set_chat(chat_id, **flip(chat, arg))
         await show(cb, *await spam_screen(chat_id))
 
-    elif screen == "dm":
+    elif scr == "dm":
         if op == "add":
-            await ask(cb, state, "dom_add", chat_id, "пришлите домены через запятую или с новой строки, "
-                                                     "например: youtube.com, example.org")
+            await ask(cb, fsm, "dom_add", chat_id, "Пришлите домены через запятую или с новой строки, "
+                                                   "например: youtube.com, example.org")
             return
         if op == "del":
-            await ask(cb, state, "dom_del", chat_id, "пришлите домены, которые убрать.")
+            await ask(cb, fsm, "dom_del", chat_id, "Пришлите домены, которые убрать.")
             return
         await show(cb, *await domains_screen(chat_id))
 
-    elif screen == "sv":
+    elif scr in ("cl", "sv", "rp"):  # sv и rp: старые кнопки, теперь всё в Чистоте
         if op == "t" and arg in {k for k, _ in SERVICE}:
-            await db.set_chat(chat_id, **{arg: 0 if chat[arg] else 1})
-        await show(cb, *await service_screen(chat_id))
+            await db.set_chat(chat_id, **flip(chat, arg))
+        elif op == "cmd":
+            await db.set_chat(chat_id, **flip(chat, "cmd_delete"))
+        elif op == "ttl":
+            await db.set_chat(chat_id, reply_ttl=cycle(REPLY_TTLS, chat["reply_ttl"]))
+        await show(cb, *await clean_screen(chat_id))
 
-    elif screen == "at":
+    elif scr == "at":
         if op == "on":
             from guard import protect
             if attack_on(chat):
@@ -444,12 +516,12 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             else:
                 await protect.attack_on(bot, chat_id, by_id=user_id)
         elif op == "auto":
-            await db.set_chat(chat_id, attack_auto=0 if chat["attack_auto"] else 1)
+            await db.set_chat(chat_id, **flip(chat, "attack_auto"))
         elif op == "len":
             await db.set_chat(chat_id, attack_minutes=cycle(ATTACK_MINUTES, chat["attack_minutes"]))
         await show(cb, *await attack_screen(chat_id))
 
-    elif screen == "wr":
+    elif scr == "wr":
         if op == "lim":
             step = 1 if arg == "1" else -1
             await db.set_chat(chat_id, warn_limit=min(10, max(1, chat["warn_limit"] + step)))
@@ -461,7 +533,7 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             await db.set_chat(chat_id, warn_ttl_days=cycle(WARN_TTLS, chat["warn_ttl_days"]))
         await show(cb, *await warns_screen(chat_id))
 
-    elif screen == "wl":
+    elif scr == "wl":
         if op in ("rw", "rm") and arg.lstrip("-").isdigit():
             if not await perms.is_creator(bot, chat_id, user_id):
                 await cb.answer("Это может только создатель чата.", show_alert=True)
@@ -471,24 +543,20 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             else:
                 await db.remove_mod(chat_id, int(arg))
                 perms.forget(chat_id, int(arg))
-        await show(cb, *await whitelist_screen(bot, chat_id, user_id))
+        await show(cb, *await trust_screen(bot, chat_id, user_id))
 
-    elif screen == "lg":
+    elif scr == "lg":
         if op == "set":
-            await ask(cb, state, "log", chat_id, "пришлите ID чата или канала для журнала (вида -100...) или "
-                                                 "перешлите сюда любое сообщение из канала. Я должен быть там "
-                                                 "админом с правом писать, вы тоже.")
+            await ask(cb, fsm, "log", chat_id, "Пришлите ID чата или канала для журнала (вида -100...) или "
+                                               "перешлите сюда любое сообщение из канала. Бот должен быть там "
+                                               "админом с правом писать, вы тоже.")
             return
         if op == "off":
             await db.set_chat(chat_id, log_chat_id=0)
         await show(cb, *await log_screen(chat_id))
 
-    elif screen == "rp":
-        if op == "cmd":
-            await db.set_chat(chat_id, cmd_delete=0 if chat["cmd_delete"] else 1)
-        elif op == "ttl":
-            await db.set_chat(chat_id, reply_ttl=cycle(REPLY_TTLS, chat["reply_ttl"]))
-        await show(cb, *await replies_screen(chat_id))
+    elif scr == "in":
+        await show(cb, *await info_screen(bot, chat_id, user_id))
     else:
         await cb.answer()
 
@@ -515,7 +583,7 @@ async def set_log_chat(bot: Bot, message: Message, chat_id: int) -> str:
         return "вы должны быть админом в том чате или канале."
     chat = await db.get_chat(chat_id)
     try:
-        await bot.send_message(target, out.head(f"сюда будет идти журнал чата \"{chat['title'] or chat_id}\"."))
+        await bot.send_message(target, out.head(f"сюда будет идти журнал чата {out.esc(chat['title'] or str(chat_id))}."))
     except TelegramAPIError as exc:
         return f"не могу туда писать: {out.esc(exc.message)}. Добавьте меня админом с правом публиковать."
     await db.set_chat(chat_id, log_chat_id=target)
@@ -526,46 +594,50 @@ async def set_log_chat(bot: Bot, message: Message, chat_id: int) -> str:
 async def on_input(message: Message, state: FSMContext, bot: Bot) -> None:
     data = await state.get_data()
     kind, chat_id = data.get("kind"), data.get("chat_id")
+    if kind == "emoji":  # премиум-эмодзи владельца, см. admin.py
+        from guard.handlers import admin
+        await admin.on_emoji_input(message, state)
+        return
     if not chat_id or not await perms.can_configure(bot, chat_id, message.from_user.id):
         await state.clear()
         return
-    back = None
+    nxt = None
     if kind == "stop_add":
         items = [w.lower()[:64] for w in split_items(message.text or "")]
         have = len(await db.stopwords(chat_id))
         items = items[:max(0, MAX_STOPWORDS - have)]
         n = await db.add_stopwords(chat_id, items)
-        await message.answer(out.head(f"добавлено слов: {n}."))
-        back = await stop_screen(chat_id)
+        await message.answer(f"✅ Добавлено слов: {n}")
+        nxt = await stop_screen(chat_id)
     elif kind == "stop_del":
         n = 0
         for w in split_items(message.text or ""):
             n += await db.remove_stopword(chat_id, w.lower())
-        await message.answer(out.head(f"убрано слов: {n}."))
-        back = await stop_screen(chat_id)
+        await message.answer(f"✅ Убрано слов: {n}")
+        nxt = await stop_screen(chat_id)
     elif kind in ("dom_add", "dom_del"):
         items = [normalize_domain(d) for d in split_items(message.text or "")]
         good = [d for d in items if d]
         if kind == "dom_add":
             have = len(await db.domains(chat_id))
             n = await db.add_domains(chat_id, good[:max(0, MAX_DOMAINS - have)])
-            note = f"добавлено доменов: {n}."
+            note = f"✅ Добавлено доменов: {n}"
         else:
             n = 0
             for d in good:
                 n += await db.remove_domain(chat_id, d)
-            note = f"убрано доменов: {n}."
+            note = f"✅ Убрано доменов: {n}"
         if len(good) < len(items):
-            note += " Часть строк не похожа на домены, пропустил."
-        await message.answer(out.head(note))
-        back = await domains_screen(chat_id)
+            note += "\nЧасть строк не похожа на домены, пропустил."
+        await message.answer(note)
+        nxt = await domains_screen(chat_id)
     elif kind == "log":
         error = await set_log_chat(bot, message, chat_id)
         if error:
             await message.answer(out.head(error + "\nОтменить: /cancel"))
             return
-        await message.answer(out.head("журнал подключён."))
-        back = await log_screen(chat_id)
+        await message.answer("✅ Журнал подключён")
+        nxt = await log_screen(chat_id)
     await state.clear()
-    if back:
-        await message.answer(back[0], reply_markup=back[1], parse_mode="HTML", link_preview_options=out.NO_PREVIEW)
+    if nxt:
+        await message.answer(nxt[0], reply_markup=nxt[1], link_preview_options=out.NO_PREVIEW)

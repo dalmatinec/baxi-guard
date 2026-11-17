@@ -3,6 +3,7 @@
 import asyncio
 import html
 import logging
+import re
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, LinkPreviewOptions, Message, ReplyParameters
@@ -14,6 +15,46 @@ NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 _HUMANIZE = str.maketrans({"—": "-", "–": "-", "«": '"', "»": '"', "„": '"', "“": '"', "”": '"'})
 _TEXT_FIELDS = ("text", "caption", "title", "description", "error_message")
 _tasks: set[asyncio.Task] = set()
+
+
+# ---------- премиум-эмодзи ----------
+# Владелец присылает их в /admin. Обычный эмодзи из набора в тексте меняется на премиум-версию,
+# а на кнопке, если текст начинается с такого эмодзи, он становится значком кнопки.
+# Работает, если у владельца бота есть Telegram Premium.
+PACK: dict[str, str] = {}   # обычный эмодзи -> id премиум-версии
+_SPLIT = re.compile(r"(<a\b[^>]*>.*?</a>|<tg-emoji\b[^>]*>.*?</tg-emoji>|<code>.*?</code>|<[^>]+>)", re.S)
+
+
+def set_pack(pairs: list[tuple[str, str]]) -> None:
+    PACK.clear()
+    for emoji_id, alt in pairs:
+        if alt and emoji_id:
+            PACK[alt] = emoji_id
+
+
+def decorate(html: str) -> str:
+    """Обычные эмодзи из набора меняются на премиум. Внутри тегов, ссылок и кода ничего не трогает."""
+    if not PACK or not html:
+        return html
+    parts = _SPLIT.split(html)
+    for i in range(0, len(parts), 2):
+        chunk = parts[i]
+        for alt, emoji_id in PACK.items():
+            if alt in chunk:
+                chunk = chunk.replace(alt, f'<tg-emoji emoji-id="{emoji_id}">{alt}</tg-emoji>')
+        parts[i] = chunk
+    return "".join(parts)
+
+
+def button_icon(button):
+    """Кнопка, текст которой начинается с эмодзи из набора: эмодзи уходит в значок кнопки."""
+    if not PACK or getattr(button, "icon_custom_emoji_id", None):
+        return button
+    for alt, emoji_id in PACK.items():
+        if button.text.startswith(alt):
+            rest = button.text[len(alt):].lstrip()
+            return button.model_copy(update={"text": rest or alt, "icon_custom_emoji_id": emoji_id})
+    return button
 
 
 def humanize(text: str) -> str:
@@ -43,17 +84,20 @@ def full_name(user) -> str:
 async def sanitize_requests(make_request, bot, method):
     """Фильтр на все запросы к Telegram: тексты, подписи, всплывашки и кнопки без длинных тире и ёлочек."""
     updates = {}
+    html_mode = _is_html(getattr(method, "parse_mode", None))
     for field in _TEXT_FIELDS:
         value = getattr(method, field, None)
         if isinstance(value, str):
             clean = humanize(value)
+            if html_mode and field in ("text", "caption"):
+                clean = decorate(clean)
             if clean != value:
                 updates[field] = clean
     markup = getattr(method, "reply_markup", None)
     rows = getattr(markup, "inline_keyboard", None)
     if rows:
-        new_rows = [[b.model_copy(update={"text": humanize(b.text)}) if humanize(b.text) != b.text else b
-                     for b in row] for row in rows]
+        new_rows = [[button_icon(b.model_copy(update={"text": humanize(b.text)}) if humanize(b.text) != b.text
+                                 else b) for b in row] for row in rows]
         if new_rows != rows:
             updates["reply_markup"] = InlineKeyboardMarkup(inline_keyboard=new_rows)
     if updates:
@@ -66,6 +110,13 @@ async def sanitize_requests(make_request, bot, method):
             raise
         await asyncio.sleep(exc.retry_after + 0.5)
         return await make_request(bot, method)
+
+
+def _is_html(parse_mode) -> bool:
+    """HTML прямо указан или стоит по умолчанию у бота (DefaultBotProperties(parse_mode='HTML'))."""
+    if isinstance(parse_mode, str):
+        return parse_mode.upper() == "HTML"
+    return parse_mode is not None and type(parse_mode).__name__ == "Default"
 
 
 def spawn(coro) -> asyncio.Task:
