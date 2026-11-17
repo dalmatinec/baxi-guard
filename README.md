@@ -101,7 +101,10 @@ git clone https://github.com/dalmatinec/baxi-guard /opt/baxi-guard
 bash /opt/baxi-guard/deploy/install.sh     # спросит токен и твой Telegram ID
 ```
 
-Скрипт создаст `/opt/baxi-guard/.env` (права 600), возьмёт `BAXI_API_KEY` из `/opt/linkhub/.env`, если он там
+Потом связать с Бакси: `bash /opt/linkhub/deploy/guard-link.sh` (скрипт из репозитория baxi: общий ключ
+в оба .env, адреса, `BAXI_BOT_ID`, перезапуск обоих ботов).
+
+Скрипт установки создаст `/opt/baxi-guard/.env` (права 600), возьмёт `BAXI_API_KEY` из `/opt/linkhub/.env`, если он там
 уже есть, иначе создаст новый (на экран не выводит). Сервис `baxi-guard.service`: Restart=always, MemoryMax=150M.
 После добавления в группу дайте боту права: удаление сообщений, блокировка, закрепление, пригласительные ссылки
 (кнопка "Добавить в чат" в /start просит их сама).

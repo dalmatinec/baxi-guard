@@ -31,6 +31,7 @@ async def main() -> None:
 
     me = await bot.me()
     log.info("Модератор @%s запущен, версия %s", me.username, VERSION)
+    api.BOT_USERNAME = me.username or ""
     await set_commands(bot)
 
     runner = await api.start()  # внутренний API для Бакси, только 127.0.0.1

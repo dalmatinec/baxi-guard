@@ -1,7 +1,7 @@
 """Внутренний API модератора для Бакси. Слушает только 127.0.0.1, снаружи его нет.
 Каждый запрос с заголовком X-Key: <BAXI_API_KEY>, без ключа 401. Всё в JSON, время в unix-секундах.
 
-GET /v1/ping                           {"ok": true, "version": "..."}
+GET /v1/ping                           {"ok": true, "version": "...", "bot": "имя_модератора"}
 GET /v1/user/{chat_id}/{user_id}       {"warns": 1, "warn_limit": 3, "muted_until": 0, "banned": false, "muted": false}
 GET /v1/chat/{chat_id}/stats?days=1    {"mute": 2, "warn": 3, "ban": 0, "kick": 0, "spam": 5}
 GET /v1/chat/{chat_id}/settings        какие защиты включены
@@ -23,6 +23,7 @@ HOST = "127.0.0.1"
 FOREVER_TS = 4102444800  # 01.01.2100: «навсегда» для тех, кто сравнивает muted_until с текущим временем
 STAT_KINDS = ("mute", "warn", "ban", "kick", "spam")
 DEFAULT_WARN_LIMIT = 3
+BOT_USERNAME = ""  # юзернейм модератора: Бакси делает по нему кнопку "Настроить модерацию"
 
 
 def _json(data: dict, status: int = 200) -> web.Response:
@@ -50,7 +51,7 @@ def _id(request: web.Request, name: str) -> int:
 
 
 async def ping(_request: web.Request) -> web.Response:
-    return _json({"ok": True, "version": VERSION})
+    return _json({"ok": True, "version": VERSION, "bot": BOT_USERNAME})
 
 
 async def user(request: web.Request) -> web.Response:
