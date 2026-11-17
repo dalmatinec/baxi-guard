@@ -183,8 +183,12 @@ cmd_status() {
     for svc in "$BAXI_SVC" "$GUARD_SVC"; do
         if systemctl is-active -q "$svc"; then echo "✅ $svc работает"; else echo "❌ $svc не работает: journalctl -u $svc -n 50"; fi
     done
+    # API поднимается после первых запросов к Telegram: ждём до 30 секунд
     for port in "$BAXI_PORT" "$GUARD_PORT"; do
-        if ss -ltn 2>/dev/null | grep -q "127.0.0.1:$port "; then echo "✅ API 127.0.0.1:$port"; else echo "⚠️ API 127.0.0.1:$port не слушает"; fi
+        local i=0
+        until ss -ltn 2>/dev/null | grep -q "127.0.0.1:$port " || [ $i -ge 30 ]; do sleep 1; i=$((i + 1)); done
+        if ss -ltn 2>/dev/null | grep -q "127.0.0.1:$port "; then echo "✅ API 127.0.0.1:$port"
+        else echo "⚠️ API 127.0.0.1:$port не слушает, смотри: journalctl -u $BAXI_SVC -u $GUARD_SVC -n 80 | grep -i api"; fi
     done
     echo "Код: Бакси $(git -C "$BAXI_DIR" log -1 --format='%h %s' 2>/dev/null | cut -c1-70)"
     echo "     модератор $(git -C "$GUARD_DIR" log -1 --format='%h %s' 2>/dev/null | cut -c1-70)"
