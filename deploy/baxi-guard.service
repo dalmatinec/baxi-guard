@@ -1,0 +1,31 @@
+# Сервис systemd модератора. Ставится скриптом deploy/install.sh
+[Unit]
+Description=baxi-guard moderation bot
+After=network-online.target
+Wants=network-online.target
+# никогда не сдаваться: даже после серии падений systemd снова поднимет бота
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=baxi-guard
+Group=baxi-guard
+WorkingDirectory=/opt/baxi-guard
+ExecStart=/opt/baxi-guard/.venv/bin/python -m guard
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+Environment=PYTHONUNBUFFERED=1
+
+# бот пишет только в свою папку data
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/baxi-guard/data
+MemoryHigh=135M
+MemoryMax=150M
+
+[Install]
+WantedBy=multi-user.target
