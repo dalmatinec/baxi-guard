@@ -202,24 +202,23 @@ async def punish(bot: Bot, chat: dict, message: Message, action: str, reason: st
         return True
     if not _can_escalate(chat_id, uid):
         return True
+    from guard import texts
     name = out.mention(uid, out.full_name(message.from_user))
+    thread = out.thread_of(message)
     try:
         if action == "delete_warn":
             res = await actions.warn(bot, chat, uid, bot.id, reason)
-            what = res.describe(chat)
+            await texts.announce_warn(bot, chat, res, name, out.esc(reason), texts.AUTO_ADMIN, thread=thread)
         elif action == "delete_mute":
             await actions.mute(bot, chat, uid, bot.id, AUTO_MUTE, reason)
-            what = "мут на 1 час"
+            await texts.send(bot, chat, "mod_mute", thread=thread, user=name, duration="1 час",
+                             reason=out.esc(reason), admin=texts.AUTO_ADMIN)
         elif action == "ban":
             await actions.ban(bot, chat, uid, bot.id, reason=reason)
-            what = "бан"
-        else:
-            return True
+            await texts.send(bot, chat, "mod_ban", thread=thread, user=name, duration="навсегда",
+                             reason=out.esc(reason), admin=texts.AUTO_ADMIN)
     except ActionError as exc:
         log.info("Не наказал %s в %s: %s", uid, chat_id, exc)
-        return True
-    await out.say(bot, chat_id, out.head(f"{name}: {what}. Причина: {out.esc(reason)}"),
-                  ttl=chat["reply_ttl"], thread=out.thread_of(message))
     return True
 
 

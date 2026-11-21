@@ -9,10 +9,10 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from guard import actions, config, db, out, perms
+from guard import actions, config, db, out, perms, texts
 from guard.actions import ActionError
 from guard.handlers.util import done, drop_command
-from guard.parse import FOREVER, Args, human_for, parse_args
+from guard.parse import FOREVER, Args, human_duration, parse_args
 
 log = logging.getLogger(__name__)
 router = Router(name="moderation")
@@ -43,6 +43,17 @@ def actor_id(message: Message) -> int:
     if perms.is_anon_admin(message) or not message.from_user:
         return 0
     return message.from_user.id
+
+
+def who(target: "Target") -> str:
+    return out.mention(target.user_id, target.name)
+
+
+def admin_of(message: Message) -> str:
+    """Кто наказал, для шаблона: имя ссылкой или «анонимный админ»."""
+    if perms.is_anon_admin(message) or not message.from_user:
+        return "анонимный админ"
+    return out.mention(message.from_user.id, out.full_name(message.from_user))
 
 
 def reason_line(reason: str) -> str:
@@ -142,8 +153,9 @@ async def cmd_mute(message: Message, chat_row: dict, allowed: bool) -> None:
     except ActionError as exc:
         await done(message, chat_row, str(exc))
         return
-    await done(message, chat_row, f"{out.mention(target.user_id, target.name)}: мут {human_for(seconds)}."
-                                  + reason_line(args.reason))
+    await texts.send(message.bot, chat_row, "mod_mute", reply_to=message, user=who(target),
+                     duration=human_duration(seconds), reason=out.esc(args.reason), admin=admin_of(message))
+    drop_command(message, chat_row)
 
 
 @router.message(Command("unmute"))
@@ -158,7 +170,8 @@ async def cmd_unmute(message: Message, chat_row: dict, allowed: bool) -> None:
     except ActionError as exc:
         await done(message, chat_row, str(exc))
         return
-    await done(message, chat_row, f"{out.mention(target.user_id, target.name)} снова может писать.")
+    await texts.send(message.bot, chat_row, "mod_unmute", reply_to=message, user=who(target), admin=admin_of(message))
+    drop_command(message, chat_row)
 
 
 # ---------- предупреждения ----------
@@ -172,8 +185,11 @@ async def cmd_warn(message: Message, chat_row: dict, allowed: bool) -> None:
         return
     res = await actions.warn(message.bot, chat_row, target.user_id, actor_id(message), args.reason,
                              link_of(real_reply(message)))
-    await done(message, chat_row, f"{out.mention(target.user_id, target.name)}: {res.describe(chat_row)}."
-                                  + reason_line(args.reason))
+    await texts.announce_warn(message.bot, chat_row, res, who(target), out.esc(args.reason), admin_of(message),
+                              reply_to=message)
+    if res.error:
+        await done(message, chat_row, f"наказать на лимите не вышло: {res.error}")
+    drop_command(message, chat_row)
 
 
 def _date(ts: int) -> str:
@@ -218,8 +234,9 @@ async def cmd_unwarn(message: Message, chat_row: dict, allowed: bool) -> None:
     if left is None:
         await done(message, chat_row, f"у {out.mention(target.user_id, target.name)} нет предупреждений.")
         return
-    await done(message, chat_row, f"{out.mention(target.user_id, target.name)}: одно предупреждение снято, "
-                                  f"осталось {left}/{chat_row['warn_limit']}.")
+    await texts.send(message.bot, chat_row, "mod_unwarn", reply_to=message, user=who(target),
+                     count=f"{left}/{chat_row['warn_limit']}", admin=admin_of(message))
+    drop_command(message, chat_row)
 
 
 # ---------- бан, разбан, кик ----------
@@ -238,8 +255,9 @@ async def cmd_ban(message: Message, chat_row: dict, allowed: bool) -> None:
     except ActionError as exc:
         await done(message, chat_row, str(exc))
         return
-    await done(message, chat_row, f"{out.mention(target.user_id, target.name)}: бан {human_for(seconds)}."
-                                  + reason_line(args.reason))
+    await texts.send(message.bot, chat_row, "mod_ban", reply_to=message, user=who(target),
+                     duration=human_duration(seconds), reason=out.esc(args.reason), admin=admin_of(message))
+    drop_command(message, chat_row)
 
 
 @router.message(Command("unban"))
@@ -254,7 +272,8 @@ async def cmd_unban(message: Message, chat_row: dict, allowed: bool) -> None:
     except ActionError as exc:
         await done(message, chat_row, str(exc))
         return
-    await done(message, chat_row, f"{out.mention(target.user_id, target.name)}: разбан, может вернуться в чат.")
+    await texts.send(message.bot, chat_row, "mod_unban", reply_to=message, user=who(target), admin=admin_of(message))
+    drop_command(message, chat_row)
 
 
 @router.message(Command("kick"))
