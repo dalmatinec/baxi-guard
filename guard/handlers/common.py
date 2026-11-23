@@ -5,8 +5,9 @@ import re
 import time
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
-from aiogram.types import ChatMemberUpdated, Message
+from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
 
 from guard import VERSION, access, db, out, perms
 from guard.handlers.util import done
@@ -111,3 +112,58 @@ async def my_status(event: ChatMemberUpdated, bot: Bot) -> None:
             await out.say(bot, chat.id, out.head("права получены, но не хватает: " + ", ".join(miss) + "."))
     elif not now_in and was_in:
         log.info("Убрали из чата %s %s", chat.id, chat.title)
+
+
+# ---------- активность чата ----------
+
+ACTIVITY_WORDS = re.compile(r"^\s*(стата|статистика|актив|активность)\s*[!.]?\s*$", re.I)
+ACTIVITY_COOLDOWN = 10       # участники без роли: не чаще раза в 10 секунд на чат
+_activity_last: dict[int, float] = {}
+_activity_edit: dict[tuple[int, int], float] = {}
+
+
+@router.message(GROUP, Command("stat"))
+@router.message(GROUP, F.text.regexp(ACTIVITY_WORDS))
+async def activity_cmd(message: Message, chat_row: dict, allowed: bool) -> None:
+    """Активность чата для всех: сообщений, сколько писали, топ-10. Период кнопками."""
+    from guard import activity, texts
+    if not allowed or not message.from_user:
+        return
+    now = time.monotonic()
+    staff = await perms.has_any(message.bot, message.chat.id, message.from_user.id)
+    if not staff and now - _activity_last.get(message.chat.id, 0) < ACTIVITY_COOLDOWN:
+        return
+    _activity_last[message.chat.id] = now
+    _text, values = await activity.card(chat_row, "day")
+    await texts.send(message.bot, chat_row, "activity", reply_to=message, ttl=0, extra=activity.markup("day"),
+                     **values)
+
+
+@router.callback_query(F.data.startswith("ac:"))
+async def activity_period(cb: CallbackQuery) -> None:
+    from guard import activity, texts
+    period = cb.data.split(":", 1)[1]
+    msg = cb.message
+    if period not in activity.PERIODS or msg is None or msg.chat.type not in ("group", "supergroup"):
+        await cb.answer()
+        return
+    key = (msg.chat.id, msg.message_id)
+    now = time.monotonic()
+    if now - _activity_edit.get(key, 0) < 1.5:   # не даём долбить кнопки
+        await cb.answer("Секунду…")
+        return
+    _activity_edit[key] = now
+    if len(_activity_edit) > 500:
+        _activity_edit.clear()
+    chat = await db.ensure_chat(msg.chat.id)
+    html, values = await activity.card(chat, period)
+    markup = texts.markup(await texts.template(chat["chat_id"], "activity"), values, activity.markup(period))
+    try:
+        if msg.photo:
+            await msg.edit_caption(caption=html[:texts.MAX_CAPTION], reply_markup=markup)
+        else:
+            await msg.edit_text(html, reply_markup=markup, link_preview_options=out.NO_PREVIEW)
+    except TelegramBadRequest as exc:
+        if "not modified" not in str(exc):
+            log.warning("Не обновил активность: %s", exc)
+    await cb.answer()

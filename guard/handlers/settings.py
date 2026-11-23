@@ -6,6 +6,7 @@
 Кнопки: g:<экран>:<chat_id>[:<действие>[:<значение>]]. Права проверяются на каждое нажатие."""
 
 import asyncio
+import html as html_lib
 import logging
 import re
 from datetime import datetime
@@ -99,6 +100,7 @@ HELP = screen("📖 Команды в чате", [
     "",
     "<b>Все</b>",
     "/profile или профиль · /leave: выписаться из списка",
+    "/stat или стата: активность чата и топ-10",
 ], note="Команда и ответ бота сами исчезают через несколько секунд, это меняется в разделе Чистота.")
 
 
@@ -420,11 +422,37 @@ async def info_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, Inline
 
 BUTTONS_HELP = ("Каждая кнопка с новой строки: <code>Текст - ссылка</code>. Несколько в один ряд через "
                 "<code>|</code>.\nПример:\n<code>📢 Канал - https://t.me/channel | 🛒 Магазин - https://example.com</code>")
+BUTTONS_OWNER_HELP = ("\n\n<b>Только для владельца бота:</b> цвет в конце кнопки <code>#синяя</code>, "
+                      "<code>#зелёная</code> или <code>#красная</code>, а премиум-эмодзи в начале станет значком "
+                      "кнопки.\nПример: <code>🔥 Канал - https://t.me/channel #зелёная</code>")
+GLOBAL_CHAT = {"chat_id": 0, "title": "Все чаты"}
+TEXT_SCREENS = ("te", "tg", "ti", "tw", "tv", "tr")
+
+
+def texts_back(chat_id: int) -> str:
+    return "a:home:0" if chat_id == 0 else f"g:c:{chat_id}"
+
+
+async def send_template(message: Message, chat_id: int, key: str, what: str) -> None:
+    """Сохранённый текст или кнопки отдельным сообщением как есть, с премиум-эмодзи: скопировать, поправить
+    в Telegram и прислать обратно. Так текст, поменянный в веб-админке, получает премиум-эмодзи."""
+    from guard import richtext, texts
+    t = await texts.template(chat_id, key)
+    if what == "text":
+        body = t.html
+    elif what == "buttons" and t.buttons:
+        body = richtext.from_web(out.esc(texts.buttons_text(t.buttons)))
+    else:
+        return
+    try:
+        await message.answer(body, link_preview_options=out.NO_PREVIEW)
+    except TelegramAPIError:
+        await message.answer(out.esc(richtext.to_web(body)), link_preview_options=out.NO_PREVIEW)
 
 
 async def texts_home(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     from guard import texts
-    chat = await db.get_chat(chat_id)
+    chat = await db.get_chat(chat_id) if chat_id else GLOBAL_CHAT
     own = await texts.custom_keys(chat_id)
     lines, buttons = [], []
     for n, group in enumerate(texts.groups()):
@@ -433,10 +461,15 @@ async def texts_home(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         icon = texts.GROUP_ICONS.get(group, "📝")
         lines.append(row(icon, group, f"{len(keys)}", f"✏️ своих {mine}" if mine else ""))
         buttons.append(btn(f"{icon} {group}", f"g:tg:{chat_id}:{n}"))
-    text = screen("✉️ Тексты", lines, path=f"⚙️ {chat_title(chat)}",
-                  note="Любое сообщение бота в этом чате можно переписать под себя: свой текст с премиум-эмодзи, "
-                       "картинка, кнопки-ссылки (например, реклама). Другие чаты это не меняет.")
-    return text, kb(*grid(buttons, 2), back(f"g:c:{chat_id}"))
+    if chat_id == 0:
+        text = screen("✉️ Тексты бота", lines, path="🛠 Админка",
+                      note="Тексты сразу для всех чатов: текст с премиум-эмодзи, картинка, кнопки с цветом и значком. "
+                           "Где админы чата поставили свой текст, остаётся их.")
+    else:
+        text = screen("✉️ Тексты", lines, path=f"⚙️ {chat_title(chat)}",
+                      note="Любое сообщение бота в этом чате можно переписать под себя: свой текст с премиум-эмодзи, "
+                           "картинка, кнопки-ссылки (например, реклама). Другие чаты это не меняет.")
+    return text, kb(*grid(buttons, 2), back(texts_back(chat_id)))
 
 
 async def texts_group(chat_id: int, n: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -445,7 +478,7 @@ async def texts_group(chat_id: int, n: int) -> tuple[str, InlineKeyboardMarkup]:
     own = await texts.custom_keys(chat_id)
     buttons = [btn(("✏️ " if k in own else "") + texts.TEXTS[k][1], f"g:ti:{chat_id}:{k}") for k in texts.keys_of(group)]
     text = screen(f"{texts.GROUP_ICONS.get(group, '📝')} {group}", ["Нажми на текст, чтобы посмотреть и поменять."],
-                  path="✉️ Тексты", note="✏️ значит в этом чате уже свой текст.")
+                  path="✉️ Тексты", note="✏️ значит здесь уже свой текст.")
     return text, kb(*grid(buttons, 1), back(f"g:te:{chat_id}"))
 
 
@@ -453,9 +486,11 @@ async def text_item(chat_id: int, key: str) -> tuple[str, InlineKeyboardMarkup]:
     from guard import texts
     group, title, _default, subs = texts.TEXTS[key]
     own = await texts.override(chat_id, key) or {}
+    common = (await texts.override(texts.GLOBAL, key) or {}) if chat_id else {}
     t = await texts.template(chat_id, key)
     hint = "\n".join(f"<code>{{{k}}}</code> {v[0]}" for k, v in subs.items())
-    lines = [row("📝", "Текст", "свой" if own.get("html") else "стандартный"),
+    source = "свой" if own.get("html") else ("общий текст бота" if common.get("html") else "стандартный")
+    lines = [row("📝", "Текст", source),
              row("🖼", "Картинка", "есть" if t.photo else "нет"),
              row("🔘", "Кнопки", str(sum(len(r) for r in t.buttons)) if t.buttons else "нет"),
              DIV, "<b>Так выглядит:</b>", texts.sample(key, t.html), DIV, "<b>Подстановки</b>", hint]
@@ -576,12 +611,18 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
         await show(cb, *await chats_screen(bot, user_id))
         return
 
-    need = {"wl": perms.R_SETTINGS | perms.R_GRANT, "rk": perms.R_SETTINGS | perms.R_GRANT,
-            "tz": perms.R_SETTINGS | perms.R_TRIGGERS}.get(scr, perms.R_SETTINGS)
-    if not await perms.flags(bot, chat_id, user_id) & need:
-        await cb.answer("Настраивать могут админы бота и владелец (создатель чата).", show_alert=True)
-        return
-    chat = await db.ensure_chat(chat_id)
+    if chat_id == 0:   # тексты бота для всех чатов: только владелец бота
+        if not perms.is_owner(user_id) or scr not in TEXT_SCREENS:
+            await cb.answer()
+            return
+        chat = GLOBAL_CHAT
+    else:
+        need = {"wl": perms.R_SETTINGS | perms.R_GRANT, "rk": perms.R_SETTINGS | perms.R_GRANT,
+                "tz": perms.R_SETTINGS | perms.R_TRIGGERS}.get(scr, perms.R_SETTINGS)
+        if not await perms.flags(bot, chat_id, user_id) & need:
+            await cb.answer("Настраивать могут админы бота и владелец (создатель чата).", show_alert=True)
+            return
+        chat = await db.ensure_chat(chat_id)
 
     if scr == "c":
         await show(cb, *await card(bot, chat_id, user_id))
@@ -759,15 +800,17 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
             await texts.reset(chat_id, op)
         elif scr == "tw":
             if arg == "nophoto":
-                await texts.set_text(chat_id, op, photo="")
+                await texts.set_text(chat_id, op, photo="", by=user_id)
             elif arg == "nobuttons":
-                await texts.set_text(chat_id, op, buttons="")
+                await texts.set_text(chat_id, op, buttons="", by=user_id)
             elif arg in ("text", "photo", "buttons"):
-                prompts = {"text": "Пришлите новый текст одним сообщением. Премиум-эмодзи, жирный, курсив и ссылки "
-                                   "сохранятся как есть. Подстановки в фигурных скобках бот заменит сам.",
+                prompts = {"text": "Выше текущий текст: скопируйте, поправьте и пришлите одним сообщением. "
+                                   "Премиум-эмодзи, жирный, курсив и ссылки сохранятся как есть. Подстановки в "
+                                   "фигурных скобках бот заменит сам.",
                            "photo": "Пришлите картинку. Она встанет над текстом (подпись до 1024 символов, длиннее: "
                                     "картинка и текст отдельно).",
-                           "buttons": BUTTONS_HELP}
+                           "buttons": BUTTONS_HELP + (BUTTONS_OWNER_HELP if perms.is_owner(user_id) else "")}
+                await send_template(cb.message, chat_id, op, arg)
                 await ask(cb, fsm, f"text:{op}:{arg}", chat_id, prompts[arg])
                 return
         await show(cb, *await text_item(chat_id, op))
@@ -812,8 +855,16 @@ async def on_input(message: Message, state: FSMContext, bot: Bot) -> None:
         from guard.handlers import admin
         await admin.on_emoji_input(message, state)
         return
+    if (kind or "").startswith("btn_icon:"):  # значок кнопки, см. admin.py
+        from guard.handlers import admin
+        await admin.on_button_icon(message, state, int(kind.split(":")[1]))
+        return
     need = perms.R_GRANT if kind == "grant" else (perms.R_TRIGGERS if (kind or "").startswith("trig") else perms.R_SETTINGS)
-    if not chat_id or not await perms.has(bot, chat_id, message.from_user.id, need):
+    if chat_id == 0:
+        allowed_here = perms.is_owner(message.from_user.id) and (kind or "").startswith("text:")
+    else:
+        allowed_here = bool(chat_id) and await perms.has(bot, chat_id, message.from_user.id, need)
+    if not allowed_here:
         await state.clear()
         return
     nxt = None
@@ -877,20 +928,25 @@ async def on_input(message: Message, state: FSMContext, bot: Bot) -> None:
             if not message.text:
                 await message.answer("Нужен текст. Пришлите ещё раз или /cancel")
                 return
-            await texts.set_text(chat_id, key, html=message.html_text[:texts.MAX_HTML])
+            await texts.set_text(chat_id, key, html=message.html_text[:texts.MAX_HTML], by=message.from_user.id)
             note = "✅ Текст сохранён"
         elif what == "photo":
             if not message.photo:
                 await message.answer("Нужна картинка. Пришлите ещё раз или /cancel")
                 return
-            await texts.set_text(chat_id, key, photo=message.photo[-1].file_id)
+            await texts.set_text(chat_id, key, photo=message.photo[-1].file_id, by=message.from_user.id)
             note = "✅ Картинка сохранена"
         else:
-            rows_, bad = texts.parse_buttons(message.text or "")
+            from guard import richtext
+            owner = perms.is_owner(message.from_user.id)
+            # у владельца премиум-эмодзи в начале кнопки становится значком, поэтому берём HTML с их ID
+            raw = (html_lib.unescape(re.sub(r"<[^>]+>", "", richtext.to_web(message.html_text)))
+                   if owner and message.text else (message.text or ""))
+            rows_, bad = texts.parse_buttons(raw, design=owner)
             if not rows_:
                 await message.answer("Не нашёл ни одной кнопки.\n\n" + BUTTONS_HELP)
                 return
-            await texts.set_text(chat_id, key, buttons=texts.buttons_text(rows_))
+            await texts.set_text(chat_id, key, buttons=texts.buttons_text(rows_), by=message.from_user.id)
             note = f"✅ Кнопок: {sum(len(r) for r in rows_)}"
             if bad:
                 note += f"\nНе понял: {out.esc(', '.join(bad)[:200])}"

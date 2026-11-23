@@ -129,6 +129,17 @@ CREATE TABLE IF NOT EXISTS member_hours (
     n        INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (chat_id, user_id, hour)
 );
+CREATE INDEX IF NOT EXISTS member_hours_chat ON member_hours (chat_id, hour);
+
+-- сообщения по дням (день по часовому поясу бота, 20261123): активность чата за сегодня и неделю, храним 40 дней
+CREATE TABLE IF NOT EXISTS member_days (
+    chat_id  INTEGER NOT NULL,
+    user_id  INTEGER NOT NULL,
+    day      INTEGER NOT NULL,
+    n        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, user_id, day)
+);
+CREATE INDEX IF NOT EXISTS member_days_chat ON member_days (chat_id, day);
 CREATE INDEX IF NOT EXISTS members_username ON members (username);
 CREATE INDEX IF NOT EXISTS members_chat_username ON members (chat_id, username);
 
@@ -293,6 +304,9 @@ async def touch_member(chat_id: int, user_id: int, username: str, name: str, *, 
         await conn().execute("INSERT INTO member_hours (chat_id, user_id, hour, n) VALUES (?, ?, ?, 1) "
                              "ON CONFLICT (chat_id, user_id, hour) DO UPDATE SET n = n + 1",
                              (chat_id, user_id, ts // 3600))
+        await conn().execute("INSERT INTO member_days (chat_id, user_id, day, n) VALUES (?, ?, ?, 1) "
+                             "ON CONFLICT (chat_id, user_id, day) DO UPDATE SET n = n + 1",
+                             (chat_id, user_id, day_of(ts)))
     await conn().commit()
     return await get_member(chat_id, user_id)
 
@@ -323,6 +337,33 @@ async def messages_24h(chat_id: int, user_id: int) -> int:
     row = await _one("SELECT COALESCE(SUM(n), 0) AS n FROM member_hours WHERE chat_id = ? AND user_id = ? AND hour > ?",
                      (chat_id, user_id, now() // 3600 - 24))
     return row["n"] if row else 0
+
+
+def day_of(ts: int) -> int:
+    """День по часовому поясу бота числом: 20261123."""
+    from datetime import datetime
+    return int(datetime.fromtimestamp(ts, config.TZ).strftime("%Y%m%d"))
+
+
+async def activity(chat_id: int, period: str, limit: int = 10) -> tuple[int, int, list[dict]]:
+    """Активность чата: (сообщений, сколько человек писали, топ [{user_id, name, username, n}]).
+    period: hour (этот час), day (сегодня), week (7 дней с сегодня), all (всё время)."""
+    if period == "all":
+        base, args = "SELECT user_id, msg_count AS n FROM members WHERE chat_id = ? AND msg_count > 0", (chat_id,)
+    elif period == "hour":
+        base, args = ("SELECT user_id, n FROM member_hours WHERE chat_id = ? AND hour = ?", (chat_id, now() // 3600))
+    else:
+        days = 1 if period == "day" else 7
+        since = day_of(now() - (days - 1) * 86400)
+        base, args = ("SELECT user_id, SUM(n) AS n FROM member_days WHERE chat_id = ? AND day >= ? GROUP BY user_id",
+                      (chat_id, since))
+    total = await _one(f"SELECT COALESCE(SUM(n), 0) AS n, COUNT(*) AS c FROM ({base})", args)
+    async with conn().execute(
+            f"SELECT t.user_id, t.n, COALESCE(m.name, '') AS name, COALESCE(m.username, '') AS username "
+            f"FROM ({base}) t LEFT JOIN members m ON m.chat_id = ? AND m.user_id = t.user_id "
+            f"ORDER BY t.n DESC LIMIT ?", (*args, chat_id, limit)) as cur:
+        top = [dict(r) for r in await cur.fetchall()]
+    return total["n"], total["c"], top
 
 
 async def member_name(chat_id: int, user_id: int) -> str:
@@ -593,6 +634,7 @@ async def cleanup() -> int:
     n = await _exec("DELETE FROM actions WHERE ts < ?", (cutoff,))
     await _exec("DELETE FROM warns WHERE active = 0 AND ts < ?", (cutoff,))
     await _exec("DELETE FROM member_hours WHERE hour < ?", (now() // 3600 - 48,))
+    await _exec("DELETE FROM member_days WHERE day < ?", (day_of(now() - 40 * 86400),))
     await conn().execute("PRAGMA optimize")                # обновить статистику индексов
     await conn().execute("PRAGMA wal_checkpoint(TRUNCATE)")  # WAL не растёт на диске
     return n

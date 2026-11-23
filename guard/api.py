@@ -6,7 +6,9 @@ GET /v1/user/{chat_id}/{user_id}       {"warns": 1, "warn_limit": 3, "muted_unti
 GET /v1/chat/{chat_id}/stats?days=1    {"mute": 2, "warn": 3, "ban": 0, "kick": 0, "spam": 5}
 GET /v1/chat/{chat_id}/settings        какие защиты включены
 
-muted_until: 0 не замучен, иначе до какого времени. Мут навсегда: FOREVER_TS (и "muted": true)."""
+muted_until: 0 не замучен, иначе до какого времени. Мут навсегда: FOREVER_TS (и "muted": true).
+
+/v1/admin/... это API для веб-админки со своим ключом WEB_API_KEY, см. guard/webapi.py."""
 
 import functools
 import hmac
@@ -30,10 +32,17 @@ def _json(data: dict, status: int = 200) -> web.Response:
     return web.json_response(data, status=status, dumps=functools.partial(json.dumps, ensure_ascii=False))
 
 
+def _key_ok(given: str, expected: str) -> bool:
+    return bool(expected) and hmac.compare_digest(given.encode(), expected.encode())
+
+
 @web.middleware
 async def auth(request: web.Request, handler):
+    """Веб-админка (/v1/admin/) только со своим ключом, Бакси только со своим: ключи не взаимозаменяемы."""
+    from guard.webapi import PREFIX
     key = request.headers.get("X-Key", "")
-    if not config.BAXI_API_KEY or not hmac.compare_digest(key.encode(), config.BAXI_API_KEY.encode()):
+    expected = config.WEB_API_KEY if request.path.startswith(PREFIX) else config.BAXI_API_KEY
+    if not _key_ok(key, expected):
         return _json({"ok": False, "error": "unauthorized"}, 401)
     try:
         return await handler(request)
@@ -104,14 +113,16 @@ def make_app() -> web.Application:
     app.router.add_get(r"/v1/user/{chat_id:-?\d+}/{user_id:-?\d+}", user)
     app.router.add_get(r"/v1/chat/{chat_id:-?\d+}/stats", stats)
     app.router.add_get(r"/v1/chat/{chat_id:-?\d+}/settings", settings)
+    from guard import webapi
+    webapi.add_routes(app)
     return app
 
 
 async def start() -> web.AppRunner | None:
     """Поднять сервер. Без ключа в .env не поднимаем: открытый API без ключа не нужен."""
-    if not config.BAXI_API_KEY:
-        log.info("BAXI_API_KEY пуст: внутренний API не запущен")
-        health.api_state = "выключен (нет BAXI_API_KEY)"
+    if not config.BAXI_API_KEY and not config.WEB_API_KEY:
+        log.info("BAXI_API_KEY и WEB_API_KEY пусты: внутренний API не запущен")
+        health.api_state = "выключен (нет ключей)"
         return None
     runner = web.AppRunner(make_app(), access_log=None)
     await runner.setup()

@@ -22,6 +22,7 @@ _tasks: set[asyncio.Task] = set()
 # а на кнопке, если текст начинается с такого эмодзи, он становится значком кнопки.
 # Работает, если у владельца бота есть Telegram Premium.
 PACK: dict[str, str] = {}   # обычный эмодзи -> id премиум-версии
+BUTTON_HOOK = None          # цвет и значок кнопок от владельца (buttons.apply), ставится при запуске
 _SPLIT = re.compile(r"(<a\b[^>]*>.*?</a>|<tg-emoji\b[^>]*>.*?</tg-emoji>|<code>.*?</code>|<[^>]+>)", re.S)
 
 
@@ -96,8 +97,7 @@ async def sanitize_requests(make_request, bot, method):
     markup = getattr(method, "reply_markup", None)
     rows = getattr(markup, "inline_keyboard", None)
     if rows:
-        new_rows = [[button_icon(b.model_copy(update={"text": humanize(b.text)}) if humanize(b.text) != b.text
-                                 else b) for b in row] for row in rows]
+        new_rows = [[_button(b) for b in row] for row in rows]
         if new_rows != rows:
             updates["reply_markup"] = InlineKeyboardMarkup(inline_keyboard=new_rows)
     if updates:
@@ -110,6 +110,18 @@ async def sanitize_requests(make_request, bot, method):
             raise
         await asyncio.sleep(exc.retry_after + 0.5)
         return await make_request(bot, method)
+
+
+def _button(b):
+    """Подпись без длинных тире, потом цвет и значок от владельца, потом премиум-эмодзи из набора."""
+    if humanize(b.text) != b.text:
+        b = b.model_copy(update={"text": humanize(b.text)})
+    if BUTTON_HOOK is not None:
+        try:
+            b = BUTTON_HOOK(b)
+        except Exception:
+            log.exception("Не применил оформление кнопки")
+    return button_icon(b)
 
 
 def _is_html(parse_mode) -> bool:

@@ -15,18 +15,21 @@ log = logging.getLogger(__name__)
 
 PRIVATE = [("start", "Главное меню"), ("settings", "Мои чаты и их настройки"), ("cancel", "Отменить ввод")]
 OWNER_DM = [("admin", "Все чаты и здоровье бота"), *PRIVATE]
-GROUP = [("profile", "Мой профиль")]
+GROUP = [("profile", "Мой профиль"), ("stat", "Активность чата")]
 MOD = [("mute", "Мут: ответом, время, причина"), ("unmute", "Снять мут"), ("warn", "Предупреждение"),
        ("unwarn", "Снять предупреждение"), ("warns", "Предупреждения человека"),
        ("ban", "Бан: ответом, время, причина"), ("unban", "Разбан"), ("kick", "Выгнать без бана"),
        ("del", "Удалить сообщение"), ("pin", "Закрепить"), ("unpin", "Открепить"), ("link", "Ссылка-приглашение"),
        ("attack", "Режим атаки"), ("game", "Запустить игру"), ("list", "Показать список игры"),
        ("close", "Закрыть список"), ("open", "Открыть список"), ("fk", "ФК для игры: /fk 30"),
-       ("random", "Рандом: /random 36"), ("endgame", "Закончить игру"), ("profile", "Профиль"), ("v", "Пинг")]
-ADMIN = [*MOD[:-2], ("trust", "В белый список (ответом)"), ("untrust", "Из белого списка"),
+       ("random", "Рандом: /random 36"), ("endgame", "Закончить игру"), ("profile", "Профиль"),
+       ("stat", "Активность"), ("v", "Пинг")]
+ADMIN = [*MOD[:-3], ("trust", "В белый список (ответом)"), ("untrust", "Из белого списка"),
          ("mod", "Назначить модератора (ответом)"), ("unmod", "Снять роль (ответом)"),
-         ("settings", "Настройки в личке"), ("chat", "Чат и права бота"), ("profile", "Профиль"), ("v", "Пинг")]
-OWNER = [*ADMIN[:-2], ("adm", "Назначить админа (ответом)"), ("profile", "Профиль"), ("v", "Пинг")]
+         ("settings", "Настройки в личке"), ("chat", "Чат и права бота"), ("profile", "Профиль"), ("stat", "Активность"),
+         ("v", "Пинг")]
+OWNER = [*ADMIN[:-3], ("adm", "Назначить админа (ответом)"), ("profile", "Профиль"), ("stat", "Активность"),
+         ("v", "Пинг")]
 BY_ROLE = {perms.MOD: MOD, perms.ADMIN: ADMIN, perms.OWNER: OWNER}
 
 
@@ -77,8 +80,8 @@ async def refresh_chat(bot: Bot, chat_id: int) -> None:
 
 async def refresh_all_once(bot: Bot) -> None:
     """Один раз после обновления: разложить меню по всем чатам (в фоне, с паузами)."""
-    if await db.kv_get("menus_v2") == "1":
+    if await db.kv_get("menus_v3") == "1":
         return
     for chat in await db.all_chats():
         await refresh_chat(bot, chat["chat_id"])
-    await db.kv_set("menus_v2", "1")
+    await db.kv_set("menus_v3", "1")

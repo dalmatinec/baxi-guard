@@ -120,11 +120,13 @@ def test_chat_texts_override(tmp_path, monkeypatch):
                              buttons="Канал - https://t.me/x | Сайт - https://example.com\nМусор")
         msg = await texts.template(CHAT, "game_closed")
         assert texts.fill(msg.html, {"count": 7}) == "<b>Чат</b>: 7 🍀"
-        assert msg.buttons == [[("Канал", "https://t.me/x"), ("Сайт", "https://example.com")]]
+        assert [[(b.text, b.url) for b in r] for r in msg.buttons] == [[("Канал", "https://t.me/x"),
+                                                                       ("Сайт", "https://example.com")]]
         assert "Список закрыт" in await texts.render(CHAT + 1, "game_closed", count=1)   # другой чат не задет
         await texts.reset(CHAT, "game_closed")
         assert "Список закрыт" in await texts.render(CHAT, "game_closed", count=2)
         rows, bad = texts.parse_buttons("A - https://a.com\nкривая строка\nB – https://b.com | C - tg://resolve?domain=x")
-        assert rows == [[("A", "https://a.com")], [("B", "https://b.com"), ("C", "tg://resolve?domain=x")]]
+        assert [[(b.text, b.url) for b in r] for r in rows] == [[("A", "https://a.com")], [
+            ("B", "https://b.com"), ("C", "tg://resolve?domain=x")]]
         assert bad == ["кривая строка"]
     run(tmp_path, monkeypatch, fn)

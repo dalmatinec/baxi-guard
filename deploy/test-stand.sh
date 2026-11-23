@@ -157,6 +157,10 @@ cmd_install() {
         set_env "$genv" BAXI_API_URL "http://127.0.0.1:$BAXI_PORT"
         set_env "$genv" BAXI_BOT_ID "${btoken%%:*}"
     fi
+    # ключ API веб-админки (свой, на экран не выводится); у старого .env дописывается
+    if ! grep -q '^WEB_API_KEY=.\+' "$genv"; then
+        set_env "$genv" WEB_API_KEY "$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+    fi
     mkdir -p "$BAXI_DIR/data" "$GUARD_DIR/data"
     chown -R baxitest:baxitest "$BAXI_DIR/data" && chown baxitest:baxitest "$benv" && chmod 600 "$benv"
     chown -R guardtest:guardtest "$GUARD_DIR/data" && chown guardtest:guardtest "$genv" && chmod 600 "$genv"

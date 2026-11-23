@@ -2,16 +2,18 @@
 
 Админ чата (право ⚙️ настройки) меняет их в личке: ⚙️ Мои чаты → чат → ✉️ Тексты. У каждого текста:
 свой текст (HTML как прислали: премиум-эмодзи, жирный, ссылки), картинка над ним и кнопки-ссылки.
-Порядок: текст чата → стандартный. Подстановки в фигурных скобках бот заменяет сам."""
+Владелец бота меняет тексты для всех чатов сразу: /admin → ✉️ Тексты бота (это чат 0).
+Порядок: текст чата → текст бота для всех → стандартный. Подстановки в фигурных скобках бот заменяет сам.
+Цвет и премиум-значок кнопок ставит только владелец бота (см. richtext.parse_buttons)."""
 
 import logging
-import re
 from dataclasses import dataclass, field
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from guard import db, out
+from guard import db, out, richtext
+from guard.richtext import Button
 
 log = logging.getLogger(__name__)
 
@@ -92,8 +94,16 @@ TEXTS: dict[str, tuple[str, str, str, dict[str, tuple[str, str]]]] = {
     "game_random": ("Игры", "🎲 Рандом",
                     "🎲 Рандом от {from} до {to}\n\nВыпало число: <b>{number}</b>",
                     {"from": ("от", "1"), "to": ("до", "36"), "number": ("выпавшее число", "17")}),
+
+    "activity": ("Активность", "📊 Активность чата",
+                 "📊 <b>Активность</b> · {chat_name}\n━━━━━━━━━━━━━━\n🗓 {period}\n💬 Сообщений: <b>{messages}</b>\n"
+                 "👥 Писали: <b>{members}</b>\n━━━━━━━━━━━━━━\n🏆 <b>Самые активные</b>\n{top}",
+                 {"chat_name": ("название чата", "Круиз"), "period": ("за какой период", "Сегодня с 00:00"),
+                  "messages": ("сколько сообщений", "1 239"), "members": ("сколько человек писали", "46"),
+                  "top": ("топ-10 строками", "🥇 Олег · 146\n🥈 Аня · 127\n🥉 Ира · 117\n4. Макс · 90")}),
 }
-GROUP_ICONS = {"Модерация": "🛡", "Роли и доверие": "⭐", "Профиль": "👤", "Задолженность": "💳", "Игры": "🎰"}
+GROUP_ICONS = {"Модерация": "🛡", "Роли и доверие": "⭐", "Профиль": "👤", "Задолженность": "💳", "Игры": "🎰",
+               "Активность": "📊"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_texts (
@@ -102,18 +112,25 @@ CREATE TABLE IF NOT EXISTS chat_texts (
     html     TEXT    NOT NULL DEFAULT '',
     photo    TEXT    NOT NULL DEFAULT '',
     buttons  TEXT    NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL DEFAULT 0,
+    updated_by TEXT    NOT NULL DEFAULT '',     -- ID того, кто поменял в боте, или "web"
     PRIMARY KEY (chat_id, key)
 );
 """
+GLOBAL = 0   # тексты бота для всех чатов
 MAX_HTML = 3000
 MAX_CAPTION = 1024
 NO_REASON = "не указана"
 AUTO_ADMIN = "автомодерация"
-_BUTTON = re.compile(r"^\s*(.+?)\s+[-–—]\s+((?:https?://|tg://)\S+)\s*$")
 
 
 async def init() -> None:
     await db.conn().executescript(SCHEMA)
+    async with db.conn().execute("PRAGMA table_info(chat_texts)") as cur:
+        cols = {r[1] for r in await cur.fetchall()}
+    for col, ddl in (("updated_at", "INTEGER NOT NULL DEFAULT 0"), ("updated_by", "TEXT NOT NULL DEFAULT ''")):
+        if col not in cols:
+            await db.conn().execute(f"ALTER TABLE chat_texts ADD COLUMN {col} {ddl}")
     await db.conn().commit()
 
 
@@ -143,42 +160,31 @@ def sample(key: str, template: str) -> str:
 class Msg:
     html: str
     photo: str = ""
-    buttons: list[list[tuple[str, str]]] = field(default_factory=list)
+    buttons: list[list[Button]] = field(default_factory=list)
 
 
-def parse_buttons(raw: str) -> tuple[list[list[tuple[str, str]]], list[str]]:
-    """«Текст - ссылка», несколько в строке через |. (кнопки, непонятые строки)."""
-    rows, bad = [], []
-    for line in (raw or "").splitlines():
-        if not line.strip():
-            continue
-        row = []
-        for part in line.split("|"):
-            m = _BUTTON.match(part)
-            if m:
-                row.append((m.group(1)[:64], m.group(2)[:512]))
-            elif part.strip():
-                bad.append(part.strip())
-        if row:
-            rows.append(row[:4])
-    return rows[:8], bad
+def parse_buttons(raw: str, *, design: bool = False) -> tuple[list[list[Button]], list[str]]:
+    """«Текст - ссылка», несколько в строке через |. design: можно цвет и премиум-значок (только владелец)."""
+    return richtext.parse_buttons(raw, design=design)
 
 
-def buttons_text(rows: list[list[tuple[str, str]]]) -> str:
-    return "\n".join(" | ".join(f"{t} - {u}" for t, u in row) for row in rows)
+def buttons_text(rows: list[list[Button]]) -> str:
+    return richtext.buttons_text(rows)
 
 
 async def override(chat_id: int, key: str) -> dict | None:
-    async with db.conn().execute("SELECT html, photo, buttons FROM chat_texts WHERE chat_id = ? AND key = ?",
-                                 (chat_id, key)) as cur:
+    async with db.conn().execute("SELECT html, photo, buttons, updated_at, updated_by FROM chat_texts "
+                                 "WHERE chat_id = ? AND key = ?", (chat_id, key)) as cur:
         row = await cur.fetchone()
     return dict(row) if row else None
 
 
-async def set_text(chat_id: int, key: str, **fields) -> None:
+async def set_text(chat_id: int, key: str, *, by: str = "", **fields) -> None:
+    """Сохранить поля текста (html, photo, buttons). by: кто поменял (ID в боте или "web")."""
     if key not in TEXTS or set(fields) - {"html", "photo", "buttons"}:
         raise ValueError(key)
     await db.conn().execute("INSERT OR IGNORE INTO chat_texts (chat_id, key) VALUES (?, ?)", (chat_id, key))
+    fields = {**fields, "updated_at": db.now(), "updated_by": str(by)}
     sets = ", ".join(f"{k} = ?" for k in fields)
     await db.conn().execute(f"UPDATE chat_texts SET {sets} WHERE chat_id = ? AND key = ?",
                             (*fields.values(), chat_id, key))
@@ -197,9 +203,12 @@ async def custom_keys(chat_id: int) -> set[str]:
 
 
 async def template(chat_id: int, key: str) -> Msg:
+    """Текст чата, если нет: текст бота для всех чатов, если нет: стандартный. Каждое поле по отдельности."""
     own = await override(chat_id, key) or {}
-    rows, _ = parse_buttons(own.get("buttons", ""))
-    return Msg(html=own.get("html") or TEXTS[key][2], photo=own.get("photo", ""), buttons=rows)
+    common = (await override(GLOBAL, key) or {}) if chat_id != GLOBAL else {}
+    rows, _ = parse_buttons(own.get("buttons") or common.get("buttons", ""), design=True)
+    return Msg(html=own.get("html") or common.get("html") or TEXTS[key][2],
+               photo=own.get("photo") or common.get("photo", ""), buttons=rows)
 
 
 async def render(chat_id: int, key: str, **values) -> str:
@@ -207,7 +216,8 @@ async def render(chat_id: int, key: str, **values) -> str:
 
 
 def markup(msg: Msg, values: dict | None = None, extra: InlineKeyboardMarkup | None = None):
-    rows = [[InlineKeyboardButton(text=fill(t, values or {})[:64], url=u) for t, u in row] for row in msg.buttons]
+    rows = [[InlineKeyboardButton(text=fill(b.text, values or {})[:64], url=b.url, style=b.style or None,
+                                  icon_custom_emoji_id=b.icon or None) for b in row] for row in msg.buttons]
     if extra is not None:
         rows += list(extra.inline_keyboard)
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None

@@ -60,6 +60,11 @@ if ! grep -q '^BAXI_API_KEY=.\+' .env; then
     set_env BAXI_API_KEY "$KEY"
 fi
 
+# ключ API будущей веб-админки (свой, на экран не выводится)
+if ! grep -q '^WEB_API_KEY=.\+' .env; then
+    set_env WEB_API_KEY "$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+fi
+
 mkdir -p data
 chown -R baxi-guard:baxi-guard data
 chown baxi-guard:baxi-guard .env && chmod 600 .env

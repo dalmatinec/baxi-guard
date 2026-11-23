@@ -31,6 +31,8 @@ async def main() -> None:
     await triggers.init()  # триггеры чатов
     from guard.handlers.admin import load_pack
     await load_pack()  # премиум-эмодзи владельца
+    from guard import buttons
+    await buttons.init()  # цвет и значки кнопок от владельца
     from guard import perms
     await db.migrate_mods_to_rights(perms.OLD_MODS_FLAGS)  # старые модераторы бота получают права
     await db.migrate_rights_to_roles(perms.R_ADMIN, perms.ROLE_MOD_FLAGS)  # галочки в роли
@@ -39,6 +41,7 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.outer_middleware(ChatTracker(count_messages=True))
     dp.edited_message.outer_middleware(ChatTracker(count_messages=False))
+    dp.callback_query.outer_middleware(buttons.PickMiddleware())  # 🎯 выбор кнопки нажатием (владелец)
     dp.include_router(handlers.setup())
 
     me = await bot.me()
