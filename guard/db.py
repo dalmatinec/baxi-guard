@@ -97,6 +97,17 @@ CREATE TABLE IF NOT EXISTS mods (
     PRIMARY KEY (chat_id, user_id)
 );
 
+-- права в боте: что человеку можно (битовая маска, см. perms.RIGHT_*). Админка в Telegram сама прав не даёт,
+-- всё может только создатель чата и владелец бота, остальным права выдаются здесь
+CREATE TABLE IF NOT EXISTS rights (
+    chat_id   INTEGER NOT NULL,
+    user_id   INTEGER NOT NULL,
+    flags     INTEGER NOT NULL DEFAULT 0,
+    added_by  INTEGER NOT NULL DEFAULT 0,
+    ts        INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, user_id)
+);
+
 -- кого видели в чате: для поиска по @username и строгости к новичкам
 CREATE TABLE IF NOT EXISTS members (
     chat_id    INTEGER NOT NULL,
@@ -223,7 +234,7 @@ async def all_chats() -> list[dict]:
 
 
 async def forget_chat(chat_id: int) -> None:
-    for table in ("chats", "warns", "stopwords", "whitelist", "domains", "mods", "members"):
+    for table in ("chats", "warns", "stopwords", "whitelist", "domains", "mods", "members", "rights"):
         await conn().execute(f"DELETE FROM {table} WHERE chat_id = ?", (chat_id,))
     await conn().commit()
 
@@ -234,7 +245,7 @@ async def migrate_chat(old_id: int, new_id: int) -> None:
         return
     if await get_chat(new_id) is None:
         await conn().execute("UPDATE chats SET chat_id = ? WHERE chat_id = ?", (new_id, old_id))
-    for table in ("warns", "actions", "stopwords", "whitelist", "domains", "mods", "members"):
+    for table in ("warns", "actions", "stopwords", "whitelist", "domains", "mods", "members", "rights"):
         await conn().execute(f"UPDATE OR IGNORE {table} SET chat_id = ? WHERE chat_id = ?", (new_id, old_id))
     await conn().commit()
 
@@ -447,6 +458,41 @@ async def toggle_mod(chat_id: int, user_id: int, by_id: int) -> bool:
 
 async def remove_mod(chat_id: int, user_id: int) -> None:
     await _exec("DELETE FROM mods WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+
+
+# ---------- права в боте ----------
+
+async def rights_of(chat_id: int, user_id: int) -> int:
+    row = await _one("SELECT flags FROM rights WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+    return row["flags"] if row else 0
+
+
+async def set_rights(chat_id: int, user_id: int, flags: int, by_id: int) -> None:
+    if flags:
+        await _exec("INSERT INTO rights (chat_id, user_id, flags, added_by, ts) VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT (chat_id, user_id) DO UPDATE SET flags = excluded.flags, added_by = excluded.added_by",
+                    (chat_id, user_id, flags, by_id, now()))
+    else:
+        await _exec("DELETE FROM rights WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+
+
+async def rights_list(chat_id: int) -> list[dict]:
+    return await _all("SELECT r.user_id, r.flags, r.added_by, r.ts, COALESCE(m.name, '') AS name, "
+                      "COALESCE(m.username, '') AS username FROM rights r LEFT JOIN members m "
+                      "ON m.chat_id = r.chat_id AND m.user_id = r.user_id WHERE r.chat_id = ? ORDER BY r.ts",
+                      (chat_id,))
+
+
+async def migrate_mods_to_rights(flags: int) -> int:
+    """Один раз: старые «модераторы бота» получают права на наказания."""
+    if await kv_get("mods_migrated") == "1":
+        return 0
+    rows = await _all("SELECT chat_id, user_id, added_by FROM mods")
+    for r in rows:
+        if not await rights_of(r["chat_id"], r["user_id"]):
+            await set_rights(r["chat_id"], r["user_id"], flags, r["added_by"])
+    await kv_set("mods_migrated", "1")
+    return len(rows)
 
 
 # ---------- очередь событий для Бакси ----------

@@ -25,7 +25,8 @@ async def ping_private(message: Message) -> None:
 
 @router.message(Command("v"), GROUP)
 async def ping_group(message: Message, chat_row: dict) -> None:
-    if not await perms.message_can_moderate(message):
+    if perms.is_anon_admin(message) or not message.from_user or \
+            not await perms.has_any(message.bot, message.chat.id, message.from_user.id):
         return
     started = time.monotonic()
     sent = await done(message, chat_row, f"на месте, версия {VERSION}")
@@ -48,7 +49,8 @@ def protections_line(chat: dict) -> str:
 
 @router.message(Command("chat"), GROUP)
 async def chat_info(message: Message, chat_row: dict) -> None:
-    if not await perms.message_can_moderate(message):
+    if perms.is_anon_admin(message) or not message.from_user or \
+            not await perms.has_any(message.bot, message.chat.id, message.from_user.id):
         return
     ok, mode = await access.status(chat_row)
     miss = await perms.missing_rights(message.bot, message.chat.id)

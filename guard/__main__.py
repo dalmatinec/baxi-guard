@@ -25,6 +25,8 @@ async def main() -> None:
     await db.connect()
     from guard.handlers.admin import load_pack
     await load_pack()  # премиум-эмодзи владельца
+    from guard import perms
+    await db.migrate_mods_to_rights(perms.OLD_MODS_FLAGS)  # старые модераторы бота получают права
     bot = Bot(config.BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     bot.session.middleware(sanitize_requests)  # никаких длинных тире и ёлочек ни в одном сообщении
     dp = Dispatcher(storage=MemoryStorage())

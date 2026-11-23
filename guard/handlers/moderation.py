@@ -7,7 +7,7 @@ from datetime import datetime
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from guard import actions, config, db, out, perms, texts
 from guard.actions import ActionError
@@ -108,10 +108,13 @@ async def protected(bot: Bot, chat_id: int, user_id: int) -> str:
     return ""
 
 
-async def gate(message: Message, chat_row: dict, allowed: bool, *rights: str) -> bool:
-    """Может ли автор команды модерировать, работает ли модератор в чате, хватает ли прав боту.
-    Участникам бот не отвечает вовсе."""
-    if not await perms.message_can_moderate(message):
+async def gate(message: Message, chat_row: dict, allowed: bool, need: int, *rights: str) -> bool:
+    """Есть ли у автора команды право в боте (need), работает ли модератор в чате, хватает ли прав боту.
+    Без прав в боте человек ответа не получает: админка в Telegram сама прав не даёт."""
+    if perms.is_anon_admin(message):
+        await done(message, chat_row, "анонимному админу бот прав не даёт, напишите от своего имени.")
+        return False
+    if not await perms.message_has(message, need):
         return False
     if not allowed and not perms.is_owner(actor_id(message)):
         await done(message, chat_row, "модерация в этом чате не активна.")
@@ -141,7 +144,7 @@ async def target_or_reply(message: Message, chat_row: dict, *, with_time: bool, 
 
 @router.message(Command("mute"))
 async def cmd_mute(message: Message, chat_row: dict, allowed: bool) -> None:
-    if not await gate(message, chat_row, allowed, RESTRICT):
+    if not await gate(message, chat_row, allowed, perms.R_MUTE, RESTRICT):
         return
     args, target = await target_or_reply(message, chat_row, with_time=True)
     if not target:
@@ -160,7 +163,7 @@ async def cmd_mute(message: Message, chat_row: dict, allowed: bool) -> None:
 
 @router.message(Command("unmute"))
 async def cmd_unmute(message: Message, chat_row: dict, allowed: bool) -> None:
-    if not await gate(message, chat_row, allowed, RESTRICT):
+    if not await gate(message, chat_row, allowed, perms.R_MUTE, RESTRICT):
         return
     args, target = await target_or_reply(message, chat_row, with_time=False)
     if not target:
@@ -178,7 +181,7 @@ async def cmd_unmute(message: Message, chat_row: dict, allowed: bool) -> None:
 
 @router.message(Command("warn"))
 async def cmd_warn(message: Message, chat_row: dict, allowed: bool) -> None:
-    if not await gate(message, chat_row, allowed):
+    if not await gate(message, chat_row, allowed, perms.R_WARN):
         return
     args, target = await target_or_reply(message, chat_row, with_time=False)
     if not target:
@@ -201,7 +204,7 @@ async def cmd_warns(message: Message, chat_row: dict, allowed: bool) -> None:
     """Ответом: предупреждения человека (для модераторов). Без ответа: свои."""
     if not allowed or not message.from_user:
         return
-    is_mod = await perms.message_can_moderate(message)
+    is_mod = await perms.message_has(message, perms.R_WARN)
     rt = real_reply(message)
     if rt is not None and is_mod and rt.from_user and not rt.sender_chat:
         user_id, name = rt.from_user.id, out.full_name(rt.from_user)
@@ -225,7 +228,7 @@ async def cmd_warns(message: Message, chat_row: dict, allowed: bool) -> None:
 
 @router.message(Command("unwarn"))
 async def cmd_unwarn(message: Message, chat_row: dict, allowed: bool) -> None:
-    if not await gate(message, chat_row, allowed):
+    if not await gate(message, chat_row, allowed, perms.R_WARN):
         return
     _args, target = await target_or_reply(message, chat_row, with_time=False, protect=False)
     if not target:
@@ -243,7 +246,7 @@ async def cmd_unwarn(message: Message, chat_row: dict, allowed: bool) -> None:
 
 @router.message(Command("ban"))
 async def cmd_ban(message: Message, chat_row: dict, allowed: bool) -> None:
-    if not await gate(message, chat_row, allowed, RESTRICT):
+    if not await gate(message, chat_row, allowed, perms.R_BAN, RESTRICT):
         return
     args, target = await target_or_reply(message, chat_row, with_time=True)
     if not target:
@@ -262,7 +265,7 @@ async def cmd_ban(message: Message, chat_row: dict, allowed: bool) -> None:
 
 @router.message(Command("unban"))
 async def cmd_unban(message: Message, chat_row: dict, allowed: bool) -> None:
-    if not await gate(message, chat_row, allowed, RESTRICT):
+    if not await gate(message, chat_row, allowed, perms.R_BAN, RESTRICT):
         return
     args, target = await target_or_reply(message, chat_row, with_time=False, protect=False)
     if not target:
@@ -278,7 +281,7 @@ async def cmd_unban(message: Message, chat_row: dict, allowed: bool) -> None:
 
 @router.message(Command("kick"))
 async def cmd_kick(message: Message, chat_row: dict, allowed: bool) -> None:
-    if not await gate(message, chat_row, allowed, RESTRICT):
+    if not await gate(message, chat_row, allowed, perms.R_BAN, RESTRICT):
         return
     args, target = await target_or_reply(message, chat_row, with_time=False)
     if not target:
@@ -297,7 +300,7 @@ async def cmd_kick(message: Message, chat_row: dict, allowed: bool) -> None:
 
 @router.message(Command("pin"))
 async def cmd_pin(message: Message, chat_row: dict, allowed: bool) -> None:
-    if not await gate(message, chat_row, allowed, "can_pin_messages"):
+    if not await gate(message, chat_row, allowed, perms.R_CLEAN, "can_pin_messages"):
         return
     rt = real_reply(message)
     if rt is None:
@@ -313,7 +316,7 @@ async def cmd_pin(message: Message, chat_row: dict, allowed: bool) -> None:
 
 @router.message(Command("unpin"))
 async def cmd_unpin(message: Message, chat_row: dict, allowed: bool) -> None:
-    if not await gate(message, chat_row, allowed, "can_pin_messages"):
+    if not await gate(message, chat_row, allowed, perms.R_CLEAN, "can_pin_messages"):
         return
     rt = real_reply(message)
     try:
@@ -326,7 +329,7 @@ async def cmd_unpin(message: Message, chat_row: dict, allowed: bool) -> None:
 
 @router.message(Command("link"))
 async def cmd_link(message: Message, chat_row: dict, allowed: bool) -> None:
-    if not await gate(message, chat_row, allowed, "can_invite_users"):
+    if not await gate(message, chat_row, allowed, perms.R_CLEAN, "can_invite_users"):
         return
     by = "анонимный админ" if perms.is_anon_admin(message) else out.full_name(message.from_user)
     try:
@@ -339,7 +342,7 @@ async def cmd_link(message: Message, chat_row: dict, allowed: bool) -> None:
 
 @router.message(Command("del"))
 async def cmd_del(message: Message, chat_row: dict, allowed: bool) -> None:
-    if not await gate(message, chat_row, allowed, "can_delete_messages"):
+    if not await gate(message, chat_row, allowed, perms.R_CLEAN, "can_delete_messages"):
         return
     rt = real_reply(message)
     if rt is None:
@@ -360,7 +363,7 @@ async def cmd_del(message: Message, chat_row: dict, allowed: bool) -> None:
 @router.message(Command("attack"))
 async def cmd_attack(message: Message, chat_row: dict, allowed: bool) -> None:
     """Включить или выключить режим атаки. /attack 1h: на час (без времени: как в настройках)."""
-    if not await gate(message, chat_row, allowed, RESTRICT):
+    if not await gate(message, chat_row, allowed, perms.R_BAN, RESTRICT):
         return
     from guard import protect
     drop_command(message, chat_row)
@@ -374,13 +377,11 @@ async def cmd_attack(message: Message, chat_row: dict, allowed: bool) -> None:
 
 # ---------- белый список и модераторы бота (только создатель чата и владелец) ----------
 
-async def creator_gate(message: Message, chat_row: dict, allowed: bool) -> bool:
+async def settings_gate(message: Message, chat_row: dict, allowed: bool, need: int) -> bool:
     if perms.is_anon_admin(message):
-        await done(message, chat_row, "это может только создатель чата, напишите от своего имени.")
+        await done(message, chat_row, "анонимному админу бот прав не даёт, напишите от своего имени.")
         return False
-    if not message.from_user or not await perms.is_creator(message.bot, message.chat.id, message.from_user.id):
-        if await perms.message_can_moderate(message):
-            await done(message, chat_row, "это может только создатель чата.")
+    if not message.from_user or not await perms.message_has(message, need):
         return False
     if not allowed and not perms.is_owner(message.from_user.id):
         await done(message, chat_row, "модерация в этом чате не активна.")
@@ -398,7 +399,7 @@ def people_list(rows: list[dict]) -> str:
 
 @router.message(Command("whitelist"))
 async def cmd_whitelist(message: Message, chat_row: dict, allowed: bool) -> None:
-    if not await creator_gate(message, chat_row, allowed):
+    if not await settings_gate(message, chat_row, allowed, perms.R_SETTINGS):
         return
     rt = real_reply(message)
     if rt is None or not rt.from_user or rt.sender_chat:
@@ -408,26 +409,84 @@ async def cmd_whitelist(message: Message, chat_row: dict, allowed: bool) -> None
         await done(message, chat_row, text)
         return
     added = await db.toggle_whitelist(message.chat.id, rt.from_user.id, message.from_user.id)
-    who = out.mention(rt.from_user.id, out.full_name(rt.from_user))
-    await done(message, chat_row, f"{who} {'теперь в белом списке' if added else 'больше не в белом списке'}.")
+    who_ = out.mention(rt.from_user.id, out.full_name(rt.from_user))
+    await done(message, chat_row, f"{who_} {'теперь в белом списке' if added else 'больше не в белом списке'}.")
+
+
+# ---------- права в боте ----------
+
+RIGHTS_TTL = 180   # карточка прав в чате живёт три минуты
+
+
+def rights_card(chat_id: int, user_id: int, name: str, f: int) -> tuple[str, InlineKeyboardMarkup]:
+    lines = [f"🔑 <b>Права в боте</b> · {out.mention(user_id, name)}", "─────────────", perms.rights_text(f), "",
+             "<i>Нажми, чтобы дать или забрать. Админка в Telegram сама прав в боте не даёт.</i>"]
+    buttons = []
+    for bit, icon, title in perms.RIGHT_NAMES:
+        on = bool(f & bit) or (bit != perms.R_ADMIN and bool(f & perms.R_ADMIN))
+        buttons.append(InlineKeyboardButton(text=f"{'✅' if on else '▫️'} {icon} {title}",
+                                            callback_data=f"rt:{chat_id}:{user_id}:{bit}"))
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    rows.append([InlineKeyboardButton(text="🚫 Забрать все", callback_data=f"rt:{chat_id}:{user_id}:0")])
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @router.message(Command("mod"))
 async def cmd_mod(message: Message, chat_row: dict, allowed: bool) -> None:
-    """Модератор бота: может пользоваться командами модерации без прав админа в Telegram."""
-    if not await creator_gate(message, chat_row, allowed):
+    """Права в боте. Ответом: галочки для этого человека. Без ответа: у кого какие права."""
+    if not await settings_gate(message, chat_row, allowed, perms.R_GRANT):
         return
     rt = real_reply(message)
     if rt is None or not rt.from_user or rt.sender_chat or rt.from_user.is_bot:
-        rows = await db.mods(message.chat.id)
-        text = ("модераторы бота:\n" + people_list(rows)) if rows else \
-            "модераторов бота нет. Назначить: ответьте /mod на сообщение человека."
+        rows = await db.rights_list(message.chat.id)
+        lines = [f"{i}. {out.mention(r['user_id'], r['name'] or str(r['user_id']))}: {perms.rights_text(r['flags'])}"
+                 for i, r in enumerate(rows, 1)]
+        text = ("права в боте:\n" + "\n".join(lines)) if lines else \
+            "прав в боте пока ни у кого нет (кроме создателя). Выдать: ответьте /mod на сообщение человека."
         await done(message, chat_row, text)
         return
-    added = await db.toggle_mod(message.chat.id, rt.from_user.id, message.from_user.id)
-    perms.forget(message.chat.id, rt.from_user.id)
-    who = out.mention(rt.from_user.id, out.full_name(rt.from_user))
-    await done(message, chat_row, f"{who} {'теперь модератор бота' if added else 'больше не модератор бота'}.")
+    u = rt.from_user
+    await db.touch_member(message.chat.id, u.id, u.username or "", out.full_name(u), message=False)
+    text, markup = rights_card(message.chat.id, u.id, out.full_name(u), await db.rights_of(message.chat.id, u.id))
+    await out.answer(message, text, ttl=RIGHTS_TTL, markup=markup)
+    drop_command(message, chat_row)
+
+
+async def toggle_right(bot: Bot, chat_id: int, actor: int, user_id: int, bit: int) -> tuple[bool, str, int]:
+    """Дать или забрать право. (получилось ли, пояснение, новые права)."""
+    current = await db.rights_of(chat_id, user_id)
+    if await perms.is_creator(bot, chat_id, user_id):
+        return False, "У создателя чата и так все права", current
+    if bit == 0:
+        if not await perms.has(bot, chat_id, actor, perms.R_GRANT):
+            return False, "Нужно право выдавать права", current
+        if current & perms.R_ADMIN and not await perms.has(bot, chat_id, actor, perms.R_ADMIN):
+            return False, "Админа бота может снять только создатель", current
+        await db.set_rights(chat_id, user_id, 0, actor)
+        return True, "Все права забраны", 0
+    if not await perms.can_grant(bot, chat_id, actor, bit):
+        return False, "Это право ты выдать не можешь", current
+    new = current ^ bit
+    if current & perms.R_ADMIN and bit != perms.R_ADMIN:   # снимаем одно право с админа бота: остальные остаются
+        new = (perms.ALL_FLAGS & ~bit)
+    await db.set_rights(chat_id, user_id, new, actor)
+    perms.forget(chat_id, user_id)
+    return True, "Готово", new
+
+
+@router.callback_query(F.data.startswith("rt:"))
+async def on_right(cb: CallbackQuery, bot: Bot) -> None:
+    _, chat_id, user_id, bit = cb.data.split(":")
+    chat_id, user_id, bit = int(chat_id), int(user_id), int(bit)
+    ok, note, new = await toggle_right(bot, chat_id, cb.from_user.id, user_id, bit)
+    await cb.answer(note, show_alert=not ok)
+    if ok:
+        name = await db.member_name(chat_id, user_id) or str(user_id)
+        text, markup = rights_card(chat_id, user_id, name, new)
+        try:
+            await cb.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+        except TelegramAPIError:
+            pass
 
 
 # ---------- настройки ----------
@@ -444,7 +503,7 @@ async def cmd_settings(message: Message, chat_row: dict, command: CommandObject)
     """Кнопка в личку, сразу в настройки этого чата. Если в чате Бакси, голую /settings оставляем ему."""
     if not command.mention and await baxi_here(message.bot, message.chat.id):
         return
-    if not await perms.message_can_moderate(message):
+    if perms.is_anon_admin(message) or not await perms.message_has(message, perms.R_SETTINGS):
         return
     me = await message.bot.me()
     markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
