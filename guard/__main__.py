@@ -33,6 +33,7 @@ async def main() -> None:
     await load_pack()  # премиум-эмодзи владельца
     from guard import perms
     await db.migrate_mods_to_rights(perms.OLD_MODS_FLAGS)  # старые модераторы бота получают права
+    await db.migrate_rights_to_roles(perms.R_ADMIN, perms.ROLE_MOD_FLAGS)  # галочки в роли
     bot = Bot(config.BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     bot.session.middleware(sanitize_requests)  # никаких длинных тире и ёлочек ни в одном сообщении
     dp = Dispatcher(storage=MemoryStorage())
@@ -46,12 +47,18 @@ async def main() -> None:
     await set_commands(bot)
 
     runner = await api.start()  # внутренний API для Бакси, только 127.0.0.1
-    tasks = [asyncio.create_task(scheduler.run(bot))]
+    from guard.commands import refresh_all_once
+    tasks = [asyncio.create_task(scheduler.run(bot)), asyncio.create_task(refresh_all_once(bot))]
     try:
         await bot.delete_webhook(drop_pending_updates=False)
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        # не больше 50 обновлений обрабатываются одновременно: при наплыве бот не съедает память
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types(), tasks_concurrency_limit=50)
     finally:
         for t in tasks:
+            t.cancel()
+        from guard import out as _out
+        from guard.gamecore import core as _core
+        for t in list(_out._tasks) + list(_core._tasks):   # отложенные удаления и правки списков
             t.cancel()
         if runner is not None:
             await runner.cleanup()

@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS member_hours (
     PRIMARY KEY (chat_id, user_id, hour)
 );
 CREATE INDEX IF NOT EXISTS members_username ON members (username);
+CREATE INDEX IF NOT EXISTS members_chat_username ON members (chat_id, username);
 
 -- события для Бакси, которые не удалось отправить
 CREATE TABLE IF NOT EXISTS outbox (
@@ -139,6 +140,8 @@ CREATE TABLE IF NOT EXISTS outbox (
     tries       INTEGER NOT NULL DEFAULT 0,
     next_at     INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE INDEX IF NOT EXISTS outbox_next ON outbox (next_at);
 
 CREATE TABLE IF NOT EXISTS kv (
     key    TEXT PRIMARY KEY,
@@ -175,6 +178,9 @@ async def connect(path=None) -> None:
     await _db.execute("PRAGMA journal_mode=WAL")
     await _db.execute("PRAGMA synchronous=NORMAL")
     await _db.execute("PRAGMA busy_timeout=5000")
+    await _db.execute("PRAGMA temp_store=MEMORY")
+    await _db.execute("PRAGMA cache_size=-8000")          # 8 МБ кеша страниц: быстрые чтения, память под контролем
+    await _db.execute("PRAGMA journal_size_limit=16777216")  # WAL после чекпойнта не больше 16 МБ на диске
     await _migrate_before()
     await _db.executescript(SCHEMA)
     await _db.commit()
@@ -517,6 +523,15 @@ async def rights_list(chat_id: int) -> list[dict]:
                       (chat_id,))
 
 
+async def migrate_rights_to_roles(admin_flag: int, mod_flags: int) -> None:
+    """Один раз: старые галочки превращаются в роли (админ бота: Админ, любые другие права: Модератор)."""
+    if await kv_get("roles_migrated") == "1":
+        return
+    await _exec("UPDATE rights SET flags = ? WHERE flags & ? != 0", (admin_flag, admin_flag))
+    await _exec("UPDATE rights SET flags = ? WHERE flags & ? = 0 AND flags != 0", (mod_flags, admin_flag))
+    await kv_set("roles_migrated", "1")
+
+
 async def migrate_mods_to_rights(flags: int) -> int:
     """Один раз: старые «модераторы бота» получают права на наказания."""
     if await kv_get("mods_migrated") == "1":
@@ -578,4 +593,6 @@ async def cleanup() -> int:
     n = await _exec("DELETE FROM actions WHERE ts < ?", (cutoff,))
     await _exec("DELETE FROM warns WHERE active = 0 AND ts < ?", (cutoff,))
     await _exec("DELETE FROM member_hours WHERE hour < ?", (now() // 3600 - 48,))
+    await conn().execute("PRAGMA optimize")                # обновить статистику индексов
+    await conn().execute("PRAGMA wal_checkpoint(TRUNCATE)")  # WAL не растёт на диске
     return n

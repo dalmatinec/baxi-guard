@@ -33,9 +33,11 @@ async def tick(bot: Bot) -> None:
 async def run(bot: Bot) -> None:
     while True:
         try:
-            await tick(bot)
+            await asyncio.wait_for(tick(bot), timeout=120)   # фоновые дела не могут зависнуть навсегда
         except asyncio.CancelledError:
             raise
+        except asyncio.TimeoutError:
+            log.warning("Фоновые дела не уложились в 2 минуты, пропускаю круг")
         except Exception:
             log.exception("Ошибка в фоновых делах")
         await asyncio.sleep(TICK)

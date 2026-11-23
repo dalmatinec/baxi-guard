@@ -92,6 +92,11 @@ PrivateTmp=true
 ReadWritePaths=$3/data
 MemoryHigh=$6
 MemoryMax=$7
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=4096
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=300
 
 [Install]
 WantedBy=multi-user.target

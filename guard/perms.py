@@ -1,10 +1,11 @@
-"""Права людей в боте и права самого бота в чате.
+"""Роли в боте и права самого бота в чате.
 
-Админка в Telegram сама ничего в боте не даёт. Всё может только создатель чата и владелец бота (OWNER_IDS),
-остальным создатель (или тот, у кого есть право выдавать права) раздаёт права галочками:
-  👑 админ бота   все права сразу
-  🔇 мут · ⚠️ предупреждения · ⛔ бан и кик · 🗑 удаление, закреп, ссылки
-  🎮 игры · 🧩 триггеры · ⚙️ настройки бота · 🔑 выдача прав
+Админка в Telegram сама ничего в боте не даёт. Роли:
+  👑 Владелец    создатель чата и владелец бота (OWNER_IDS): всё, назначает и снимает админов
+  ⭐ Админ        всё в чате: модерация, игры, триггеры, настройки, тексты, белый список, назначает модераторов
+  🛡 Модератор    мут, предупреждения, бан и кик, удаление и закреп, игры, триггеры
+Назначение в чате ответом: /mod (модератор), /adm (админ), /unmod (снять роль).
+Внутри роли хранятся битовой маской прав (R_*), команды проверяют нужный бит.
 
 Ответ Telegram (get_chat_member) кешируем на минуту."""
 
@@ -41,7 +42,11 @@ ALL_FLAGS = R_MUTE | R_WARN | R_BAN | R_CLEAN | R_GAMES | R_TRIGGERS | R_SETTING
 RIGHT_NAMES = [(R_ADMIN, "👑", "админ бота"), (R_MUTE, "🔇", "мут"), (R_WARN, "⚠️", "предупреждения"),
                (R_BAN, "⛔", "бан и кик"), (R_CLEAN, "🗑", "удаление и закреп"), (R_GAMES, "🎮", "игры"),
                (R_TRIGGERS, "🧩", "триггеры"), (R_SETTINGS, "⚙️", "настройки"), (R_GRANT, "🔑", "выдача прав")]
-OLD_MODS_FLAGS = R_MUTE | R_WARN | R_BAN | R_CLEAN
+ROLE_MOD_FLAGS = R_MUTE | R_WARN | R_BAN | R_CLEAN | R_GAMES | R_TRIGGERS
+OLD_MODS_FLAGS = ROLE_MOD_FLAGS
+OWNER, ADMIN, MOD, NONE = "owner", "admin", "mod", ""
+ROLE_TITLES = {OWNER: "👑 Владелец", ADMIN: "⭐ Админ", MOD: "🛡 Модератор", NONE: "участник"}
+ROLE_RANK = {NONE: 0, MOD: 1, ADMIN: 2, OWNER: 3}
 
 
 def is_owner(user_id: int | None) -> bool:
@@ -141,9 +146,46 @@ async def is_staff(bot: Bot, chat_id: int, user_id: int) -> bool:
     return bool(await db.rights_of(chat_id, user_id))
 
 
+def role_from_flags(f: int) -> str:
+    if f & R_ADMIN:
+        return ADMIN
+    return MOD if f else NONE
+
+
+async def role(bot: Bot, chat_id: int, user_id: int) -> str:
+    if await is_creator(bot, chat_id, user_id):
+        return OWNER
+    return role_from_flags(await db.rights_of(chat_id, user_id))
+
+
+def role_flags(r: str) -> int:
+    return {ADMIN: R_ADMIN, MOD: ROLE_MOD_FLAGS}.get(r, 0)
+
+
+async def can_set_role(bot: Bot, chat_id: int, actor: int, target: int, new: str) -> str:
+    """Можно ли actor поставить target роль new ('' значит снять). Пусто: можно, иначе почему нельзя."""
+    me, them = await role(bot, chat_id, actor), await role(bot, chat_id, target)
+    if them == OWNER:
+        return "у владельца и так все права"
+    if me == OWNER:
+        return ""
+    if me != ADMIN:
+        return "назначать может только админ или владелец"
+    if them == ADMIN or new == ADMIN:
+        return "админов назначает и снимает только владелец"
+    return ""
+
+
+async def set_role(chat_id: int, user_id: int, new: str, by_id: int) -> None:
+    await db.set_rights(chat_id, user_id, role_flags(new), by_id)
+    forget(chat_id, user_id)
+
+
 def rights_text(f: int) -> str:
     if f & R_ADMIN:
-        return "👑 админ бота"
+        return "⭐ Админ"
+    if f and f & ROLE_MOD_FLAGS == f:
+        return "🛡 Модератор"
     names = [f"{icon} {name}" for bit, icon, name in RIGHT_NAMES if bit != R_ADMIN and f & bit]
     return ", ".join(names) or "нет прав"
 

@@ -7,7 +7,7 @@ from datetime import datetime
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from guard import actions, config, db, out, perms, texts
 from guard.actions import ActionError
@@ -398,96 +398,83 @@ def people_list(rows: list[dict]) -> str:
     return "\n".join(out_lines)
 
 
-@router.message(Command("whitelist"))
-async def cmd_whitelist(message: Message, chat_row: dict, allowed: bool) -> None:
+# ---------- белый список ----------
+
+@router.message(Command("trust", "untrust"))
+async def cmd_trust(message: Message, chat_row: dict, allowed: bool, command: CommandObject) -> None:
+    """/trust ответом: в белый список (можно ссылки и пересылки), без ответа: весь список. /untrust ответом: убрать."""
     if not await settings_gate(message, chat_row, allowed, perms.R_SETTINGS):
         return
     rt = real_reply(message)
-    if rt is None or not rt.from_user or rt.sender_chat:
+    if rt is None or not rt.from_user or rt.sender_chat or rt.from_user.is_bot:
         rows = await db.whitelist(message.chat.id)
         text = ("белый список (им можно ссылки и пересылки):\n" + people_list(rows)) if rows else \
-            "белый список пуст. Добавить: ответьте /whitelist на сообщение человека."
-        await done(message, chat_row, text)
-        return
-    added = await db.toggle_whitelist(message.chat.id, rt.from_user.id, message.from_user.id)
-    who_ = out.mention(rt.from_user.id, out.full_name(rt.from_user))
-    await done(message, chat_row, f"{who_} {'теперь в белом списке' if added else 'больше не в белом списке'}.")
-
-
-# ---------- права в боте ----------
-
-RIGHTS_TTL = 180   # карточка прав в чате живёт три минуты
-
-
-def rights_card(chat_id: int, user_id: int, name: str, f: int) -> tuple[str, InlineKeyboardMarkup]:
-    lines = [f"🔑 <b>Права в боте</b> · {out.mention(user_id, name)}", "─────────────", perms.rights_text(f), "",
-             "<i>Нажми, чтобы дать или забрать. Админка в Telegram сама прав в боте не даёт.</i>"]
-    buttons = []
-    for bit, icon, title in perms.RIGHT_NAMES:
-        on = bool(f & bit) or (bit != perms.R_ADMIN and bool(f & perms.R_ADMIN))
-        buttons.append(InlineKeyboardButton(text=f"{'✅' if on else '▫️'} {icon} {title}",
-                                            callback_data=f"rt:{chat_id}:{user_id}:{bit}"))
-    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
-    rows.append([InlineKeyboardButton(text="🚫 Забрать все", callback_data=f"rt:{chat_id}:{user_id}:0")])
-    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-@router.message(Command("mod"))
-async def cmd_mod(message: Message, chat_row: dict, allowed: bool) -> None:
-    """Права в боте. Ответом: галочки для этого человека. Без ответа: у кого какие права."""
-    if not await settings_gate(message, chat_row, allowed, perms.R_GRANT):
-        return
-    rt = real_reply(message)
-    if rt is None or not rt.from_user or rt.sender_chat or rt.from_user.is_bot:
-        rows = await db.rights_list(message.chat.id)
-        lines = [f"{i}. {out.mention(r['user_id'], r['name'] or str(r['user_id']))}: {perms.rights_text(r['flags'])}"
-                 for i, r in enumerate(rows, 1)]
-        text = ("права в боте:\n" + "\n".join(lines)) if lines else \
-            "прав в боте пока ни у кого нет (кроме создателя). Выдать: ответьте /mod на сообщение человека."
+            "белый список пуст. Добавить: ответьте /trust на сообщение человека."
         await done(message, chat_row, text)
         return
     u = rt.from_user
     await db.touch_member(message.chat.id, u.id, u.username or "", out.full_name(u), message=False)
-    text, markup = rights_card(message.chat.id, u.id, out.full_name(u), await db.rights_of(message.chat.id, u.id))
-    await out.answer(message, text, ttl=RIGHTS_TTL, markup=markup)
+    inside = await db.in_whitelist(message.chat.id, u.id)
+    want = command.command.lower() == "trust"
+    if want == inside:
+        await done(message, chat_row, f"{out.mention(u.id, out.full_name(u))} "
+                                      f"{'уже' if inside else 'и так не'} в белом списке.")
+        return
+    await db.toggle_whitelist(message.chat.id, u.id, message.from_user.id)
+    await texts.send(message.bot, chat_row, "trust_add" if want else "trust_remove", reply_to=message,
+                     user=out.mention(u.id, out.full_name(u)), admin=admin_of(message))
     drop_command(message, chat_row)
 
 
-async def toggle_right(bot: Bot, chat_id: int, actor: int, user_id: int, bit: int) -> tuple[bool, str, int]:
-    """Дать или забрать право. (получилось ли, пояснение, новые права)."""
-    current = await db.rights_of(chat_id, user_id)
-    if await perms.is_creator(bot, chat_id, user_id):
-        return False, "У создателя чата и так все права", current
-    if bit == 0:
-        if not await perms.has(bot, chat_id, actor, perms.R_GRANT):
-            return False, "Нужно право выдавать права", current
-        if current & perms.R_ADMIN and not await perms.has(bot, chat_id, actor, perms.R_ADMIN):
-            return False, "Админа бота может снять только создатель", current
-        await db.set_rights(chat_id, user_id, 0, actor)
-        return True, "Все права забраны", 0
-    if not await perms.can_grant(bot, chat_id, actor, bit):
-        return False, "Это право ты выдать не можешь", current
-    new = current ^ bit
-    if current & perms.R_ADMIN and bit != perms.R_ADMIN:   # снимаем одно право с админа бота: остальные остаются
-        new = (perms.ALL_FLAGS & ~bit)
-    await db.set_rights(chat_id, user_id, new, actor)
-    perms.forget(chat_id, user_id)
-    return True, "Готово", new
+# ---------- роли: модератор, админ, владелец ----------
+
+def staff_lines(rows: list[dict]) -> list[str]:
+    return [f"{i}. {out.mention(r['user_id'], r['name'] or str(r['user_id']))}: {perms.rights_text(r['flags'])}"
+            for i, r in enumerate(rows, 1)]
 
 
-@router.callback_query(F.data.startswith("rt:"))
-async def on_right(cb: CallbackQuery, bot: Bot) -> None:
-    _, chat_id, user_id, bit = cb.data.split(":")
-    chat_id, user_id, bit = int(chat_id), int(user_id), int(bit)
-    ok, note, new = await toggle_right(bot, chat_id, cb.from_user.id, user_id, bit)
-    await cb.answer(note, show_alert=not ok)
-    if ok:
-        name = await db.member_name(chat_id, user_id) or str(user_id)
-        text, markup = rights_card(chat_id, user_id, name, new)
-        try:
-            await cb.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
-        except TelegramAPIError:
-            pass
+@router.message(Command("mod", "adm", "unmod"))
+async def cmd_role(message: Message, chat_row: dict, allowed: bool, command: CommandObject) -> None:
+    """Ответом: /mod модератор, /adm админ, /unmod снять роль. Без ответа: кто с какой ролью."""
+    if perms.is_anon_admin(message):
+        await done(message, chat_row, "анонимному админу бот прав не даёт, напишите от своего имени.")
+        return
+    if not message.from_user or await perms.role(message.bot, message.chat.id, message.from_user.id) not in (
+            perms.OWNER, perms.ADMIN):
+        return
+    if not allowed and not perms.is_owner(message.from_user.id):
+        await done(message, chat_row, "модерация в этом чате не активна.")
+        return
+    rt = real_reply(message)
+    if rt is None or not rt.from_user or rt.sender_chat or rt.from_user.is_bot:
+        lines = staff_lines(await db.rights_list(message.chat.id))
+        text = ("роли в боте:\n" + "\n".join(lines)) if lines else \
+            "ролей пока ни у кого нет (кроме владельца). Назначить: ответьте /mod или /adm на сообщение человека."
+        await done(message, chat_row, text)
+        return
+    u = rt.from_user
+    new = {"mod": perms.MOD, "adm": perms.ADMIN, "unmod": perms.NONE}[command.command.lower()]
+    problem = await perms.can_set_role(message.bot, message.chat.id, message.from_user.id, u.id, new)
+    if problem:
+        await done(message, chat_row, problem + ".")
+        return
+    old = await perms.role(message.bot, message.chat.id, u.id)
+    who_ = out.mention(u.id, out.full_name(u))
+    if old == new:
+        await done(message, chat_row, f"{who_} уже {perms.ROLE_TITLES[new].split(' ', 1)[-1].lower()}."
+                   if new else f"у {who_} и так нет роли.")
+        return
+    await db.touch_member(message.chat.id, u.id, u.username or "", out.full_name(u), message=False)
+    await perms.set_role(message.chat.id, u.id, new, message.from_user.id)
+    from guard import commands
+    await commands.refresh_member(message.bot, message.chat.id, u.id)
+    if new:
+        await texts.send(message.bot, chat_row, "role_admin" if new == perms.ADMIN else "role_mod",
+                         reply_to=message, ttl=0, user=who_, admin=admin_of(message))
+    else:
+        await texts.send(message.bot, chat_row, "role_removed", reply_to=message, ttl=0, user=who_,
+                         admin=admin_of(message), role=perms.ROLE_TITLES[old].split(" ", 1)[-1].lower())
+    drop_command(message, chat_row)
 
 
 # ---------- настройки ----------

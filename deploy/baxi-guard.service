@@ -26,6 +26,12 @@ PrivateTmp=true
 ReadWritePaths=/opt/baxi-guard/data
 MemoryHigh=135M
 MemoryMax=150M
+# не больше половины ядра, ограничение потоков и файлов, логи без флуда
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=4096
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=300
 
 [Install]
 WantedBy=multi-user.target

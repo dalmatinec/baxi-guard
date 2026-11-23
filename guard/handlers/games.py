@@ -30,6 +30,9 @@ FK_CHOICES = (0, 10, 20, 50)
 _CLOSE = re.compile(r"^\s*(закрыть список|/close)(@\w+)?\s*$", re.I)
 _OPEN = re.compile(r"^\s*(открыть список|/open)(@\w+)?\s*$", re.I)
 _END = re.compile(r"^\s*(закончить игру|сбросить игру|/endgame)(@\w+)?\s*$", re.I)
+_FK = re.compile(r"^\s*(?:/fk(?:@\w+)?(?:\s+(\d{1,5}))?|фк\s+(\d{1,5}))\s*$", re.I)   # «фк» только с числом
+_LIST = re.compile(r"^\s*/list(@\w+)?\s*$", re.I)
+_LEAVE = re.compile(r"^\s*(/leave(@\w+)?|выписаться)\s*$", re.I)
 _TOP = re.compile(r"^\s*([+-])\s*топ(?:\s+(игра|навсегда|\d{1,3}\s*[мчдmhd]))?\s*$", re.I)
 _ADD = re.compile(r"^\s*\+\s*в\s+список\s*$", re.I)
 _REMOVE = re.compile(r"^\s*убрать\s+(\d{1,4})\s*$", re.I)
@@ -123,7 +126,7 @@ async def on_button(cb: CallbackQuery, bot: Bot, state: FSMContext) -> None:
 
     # дальше только те, у кого право 🎮 игры
     if not await perms.has(bot, chat_id, user.id, perms.R_GAMES):
-        return await cb.answer("Нужно право 🎮 игры", show_alert=True)
+        return await cb.answer("Это для модераторов и админов", show_alert=True)
     if action in ("close", "reopen"):
         game = await core.get(int(parts[2]))
         if not game or game["chat_id"] != chat_id or game["status"] not in ("open", "closed"):
@@ -139,6 +142,7 @@ async def on_button(cb: CallbackQuery, bot: Bot, state: FSMContext) -> None:
             await core.update(game["id"], status="open", closed_at=0)
             await cb.answer("Список снова открыт")
             await core.refresh(bot, game["id"], gap=0)
+            await core.pin(bot, game)
         else:
             await cb.answer()
         return
@@ -161,16 +165,21 @@ async def on_button(cb: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         await cb.answer()
         return await cb.message.edit_text(f"{g.icon} <b>{g.title}</b>\n━━━━━━━━━━━━━━\nКак записываться?",
                                           parse_mode="HTML", reply_markup=kb(rows + [[("⬅️ Назад", "lg:new")]]))
-    if action == "mode":
-        kind, mode = parts[2], parts[3]
-        g = GAMES[kind]
-        fk_row = [(str(n) if n else "без ФК", f"lg:fk:{kind}:{mode}:{n}") for n in FK_CHOICES]
+    if action == "mode":   # ФК при запуске не спрашиваем: его ставят по желанию кнопкой 🎯 ФК или /fk
         await cb.answer()
-        return await cb.message.edit_text(
-            f"{g.icon} <b>{g.title}</b>\n━━━━━━━━━━━━━━\nФК: сколько сообщений нужно победителю с начала игры.\n"
-            "Засчитываются сообщения от 4 букв, «го», «ок», «+», стикеры и команды не идут.",
-            parse_mode="HTML", reply_markup=kb([fk_row, [("✏️ Своё", f"lg:fk:{kind}:{mode}:own")],
-                                                [("⬅️ Назад", f"lg:pick:{kind}")]]))
+        await start_game(bot, cb.message, parts[2], parts[3], 0, user.id)
+        return
+    if action == "setfk":
+        game = await core.get(int(parts[2]))
+        if not game or game["chat_id"] != chat_id or game["status"] not in ("open", "closed"):
+            return await cb.answer("Игра уже закончилась")
+        await state.set_state(GameFk.value)
+        await state.update_data(game_id=game["id"])
+        await cb.answer()
+        await say(bot, chat_id, f"🎯 {mention(user.id, name_of(user))}, напиши ФК числом: сколько сообщений нужно "
+                                "победителю с начала игры (0 убрать). Засчитываются сообщения от 4 букв.",
+                  thread=game["thread_id"] or None)
+        return
     if action == "fk":
         kind, mode, value = parts[2], parts[3], parts[4]
         if value == "own":
@@ -203,13 +212,21 @@ async def start_game(bot: Bot, setup_msg: Message, kind: str, mode: str, fk: int
 
 @router.message(GameFk.value)
 async def on_own_fk(message: Message, bot: Bot, state: FSMContext) -> None:
+    """Число после кнопки 🎯 ФК. Не число: ожидание снимается, сообщение идёт дальше как обычное."""
+    from aiogram.dispatcher.event.bases import SkipHandler
     data = await state.get_data()
     text = (message.text or "").strip()
-    if not text.isdigit() or not 0 <= int(text) <= 10000:
-        await say(bot, message.chat.id, "нужно число, например 30", reply_to=message)
-        return
     await state.clear()
+    if not text.isdigit() or not 0 <= int(text) <= 10000:
+        raise SkipHandler()
     fk = int(text)
+    if data.get("game_id"):
+        game = await core.get(data["game_id"])
+        if game and game["status"] in ("open", "closed"):
+            await core.set_fk(game, fk)
+            await core.refresh(bot, game["id"], gap=0)
+            await say(bot, message.chat.id, f"🎯 ФК {fk}" if fk else "🎯 ФК убран", reply_to=message)
+        return
     game = await core.create(message.chat.id, data["kind"], data["mode"], fk, message.from_user.id,
                              thread_of(message) or 0)
     try:
@@ -270,6 +287,20 @@ async def join_by_text(message: Message, allowed: bool = True) -> dict | bool:
     return False
 
 
+async def leave_by_text(message: Message, allowed: bool = True) -> dict | bool:
+    """/leave или «выписаться»: убрать свою последнюю запись (то же, что кнопка Выписаться)."""
+    if not _LEAVE.match(message.text or ""):
+        return False
+    return await live_game(message, allowed)
+
+
+@router.message(leave_by_text)
+async def on_leave_text(message: Message, bot: Bot, game: dict) -> None:
+    if await core.leave(game, message.from_user.id):
+        core.refresh_later(bot, game["id"])
+        await say(bot, message.chat.id, "❌ выписал из списка", reply_to=message, ttl=15)
+
+
 @router.message(join_by_text)
 async def on_join_text(message: Message, bot: Bot, game: dict) -> None:
     user = message.from_user
@@ -284,7 +315,7 @@ async def admin_command(message: Message, bot: Bot, chat_row: dict | None = None
     text = message.text or ""
     name, m = "", None
     for cmd, rx in (("close", _CLOSE), ("open", _OPEN), ("end", _END), ("top", _TOP), ("add", _ADD),
-                    ("remove", _REMOVE)):
+                    ("remove", _REMOVE), ("fk", _FK), ("list", _LIST)):
         m = rx.match(text)
         if m:
             name = cmd
@@ -299,8 +330,16 @@ async def admin_command(message: Message, bot: Bot, chat_row: dict | None = None
     return {"cmd": name, "m": m}
 
 
+async def state_for_fk(message: Message, game: dict, state: FSMContext) -> None:
+    await state.set_state(GameFk.value)
+    await state.update_data(game_id=game["id"])
+    await say(message.bot, message.chat.id, "🎯 напиши ФК числом: сколько сообщений нужно победителю с начала игры "
+                                            "(0 убрать). Засчитываются сообщения от 4 букв.", reply_to=message)
+
+
 @router.message(admin_command)
-async def on_admin_command(message: Message, bot: Bot, cmd: str, m, chat_row: dict, allowed: bool = True) -> None:
+async def on_admin_command(message: Message, bot: Bot, cmd: str, m, chat_row: dict, state: FSMContext,
+                           allowed: bool = True) -> None:
     chat_id = message.chat.id
     if cmd == "random":   # отдельная команда, игра для неё не нужна
         lo, hi = m
@@ -328,7 +367,24 @@ async def on_admin_command(message: Message, bot: Bot, cmd: str, m, chat_row: di
     elif cmd == "open":
         await core.update(game["id"], status="open", closed_at=0)
         await core.refresh(bot, game["id"], gap=0)
+        await core.pin(bot, game)
         await say(bot, chat_id, "🔓 Список снова открыт, записывайтесь", reply_to=message)
+    elif cmd == "fk":
+        value = m.group(1) or m.group(2)
+        if value is None:   # /fk без числа: как кнопка
+            await state_for_fk(message, game, state)
+            return
+        await core.set_fk(game, int(value))
+        await core.refresh(bot, game["id"], gap=0)
+        await say(bot, chat_id, f"🎯 ФК {int(value)}" if int(value) else "🎯 ФК убран", reply_to=message)
+    elif cmd == "list":   # показать живой список заново (внизу чата) и закрепить
+        old = game["list_msg_id"]
+        await core.post_list(bot, game)
+        if old:
+            try:
+                await bot.unpin_chat_message(chat_id, message_id=old)
+            except Exception:
+                pass
     elif cmd == "end":
         await core.finish(chat_id)
         if game["list_msg_id"]:

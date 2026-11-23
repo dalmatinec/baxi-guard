@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS game_entries (
     ts        REAL    NOT NULL,
     PRIMARY KEY (game_id, pos)
 );
+CREATE INDEX IF NOT EXISTS game_entries_user ON game_entries (game_id, user_id);
 CREATE TABLE IF NOT EXISTS game_fk (
     game_id  INTEGER NOT NULL,
     user_id  INTEGER NOT NULL,
@@ -118,6 +119,16 @@ async def update(game_id: int, **fields) -> None:
     sets = ", ".join(f"{k} = ?" for k in fields)
     await db.conn().execute(f"UPDATE games SET {sets} WHERE id = ?", (*fields.values(), game_id))
     await db.conn().commit()
+
+
+async def set_fk(game: dict, fk: int) -> None:
+    """ФК по желанию, в любой момент игры (кнопка 🎯 ФК или /fk 30). 0 убирает."""
+    fk = max(0, min(10000, fk))
+    await update(game["id"], fk=fk)
+    if fk:
+        _fk_games[game["chat_id"]] = (game["id"], fk)
+    else:
+        _fk_games.pop(game["chat_id"], None)
 
 
 async def finish(chat_id: int) -> dict | None:
@@ -269,10 +280,12 @@ def list_markup(game: dict, cut: bool):
                                             style="success"))
         row.append(InlineKeyboardButton(text="❌ Выписаться", callback_data=f"lg:leave:{game['id']}"))
         rows.append(row)
-        # закрыть список кнопкой: работает у тех, у кого есть право 🎮 игры
-        rows.append([InlineKeyboardButton(text="🔒 Закрыть список", callback_data=f"lg:close:{game['id']}")])
+        # кнопки ведущего: работают у тех, у кого есть роль (право 🎮 игры)
+        rows.append([InlineKeyboardButton(text="🔒 Закрыть список", callback_data=f"lg:close:{game['id']}"),
+                     InlineKeyboardButton(text="🎯 ФК", callback_data=f"lg:setfk:{game['id']}")])
     elif game["status"] == "closed":
-        rows.append([InlineKeyboardButton(text="🔓 Открыть снова", callback_data=f"lg:reopen:{game['id']}")])
+        rows.append([InlineKeyboardButton(text="🔓 Открыть снова", callback_data=f"lg:reopen:{game['id']}"),
+                     InlineKeyboardButton(text="🎯 ФК", callback_data=f"lg:setfk:{game['id']}")])
     if cut:
         rows.append([InlineKeyboardButton(text="📋 Весь список", callback_data=f"lg:full:{game['id']}")])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
@@ -286,11 +299,19 @@ async def post_list(bot, game: dict) -> None:
     if sent is None:
         return
     await update(game["id"], list_msg_id=sent.message_id)
+    game = dict(game, list_msg_id=sent.message_id)
+    await pin(bot, game)
+    _last_edit[game["id"]] = time.monotonic()
+
+
+async def pin(bot, game: dict) -> None:
+    """Закрепить живой список (при запуске и когда список снова открыли)."""
+    if not game.get("list_msg_id"):
+        return
     try:
-        await bot.pin_chat_message(game["chat_id"], sent.message_id, disable_notification=True)
+        await bot.pin_chat_message(game["chat_id"], game["list_msg_id"], disable_notification=True)
     except Exception as exc:
         log.info("Не закрепил список в %s: %s", game["chat_id"], exc)
-    _last_edit[game["id"]] = time.monotonic()
 
 
 async def refresh(bot, game_id: int, *, gap: float = REFRESH_GAP) -> None:

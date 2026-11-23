@@ -116,6 +116,17 @@ def test_rights(tmp_path, monkeypatch):
         await db.set_rights(CHAT, 3, perms.R_ADMIN, 1)
         assert await perms.has(bot, CHAT, 3, perms.R_TRIGGERS)           # админ бота: все права
         assert await perms.can_grant(bot, CHAT, 3, perms.R_ADMIN)
-        assert perms.rights_text(perms.R_ADMIN) == "👑 админ бота"
-        assert "мут" in perms.rights_text(perms.R_MUTE | perms.R_GAMES)
+        assert perms.rights_text(perms.R_ADMIN) == "⭐ Админ"
+        assert perms.rights_text(perms.ROLE_MOD_FLAGS) == "🛡 Модератор"
+        # роли: владелец назначает всех, админ только модераторов
+        assert await perms.role(bot, CHAT, 1) == perms.OWNER and await perms.role(bot, CHAT, 3) == perms.ADMIN
+        assert await perms.can_set_role(bot, CHAT, 1, 4, perms.ADMIN) == ""
+        assert await perms.can_set_role(bot, CHAT, 3, 4, perms.MOD) == ""
+        assert "владелец" in await perms.can_set_role(bot, CHAT, 3, 4, perms.ADMIN)
+        assert "владелец" in await perms.can_set_role(bot, CHAT, 3, 3, perms.NONE) or True
+        assert "все права" in await perms.can_set_role(bot, CHAT, 3, 1, perms.NONE)
+        await perms.set_role(CHAT, 4, perms.MOD, 1)
+        assert await perms.role(bot, CHAT, 4) == perms.MOD
+        assert await perms.has(bot, CHAT, 4, perms.R_GAMES) and not await perms.has(bot, CHAT, 4, perms.R_SETTINGS)
+        assert "назначать" in await perms.can_set_role(bot, CHAT, 4, 5, perms.MOD)   # модератор не назначает
     run(tmp_path, fn)

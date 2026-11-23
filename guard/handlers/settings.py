@@ -78,26 +78,27 @@ async def start_markup(bot: Bot, user_id: int) -> InlineKeyboardMarkup:
 
 
 HELP = screen("📖 Команды в чате", [
-    "Для админов с правом ограничивать участников и модераторов бота.",
+    "Роли: 👑 владелец (создатель чата), ⭐ админ, 🛡 модератор. Админка в Telegram сама ничего не даёт.",
     "Кого: ответом, @username или ID. Время: 30m, 2h, 3d, 1w.",
     "",
-    "<b>Наказания</b>",
-    "/mute [время] [причина] · мут, по умолчанию час",
-    "/warn [причина] · предупреждение",
-    "/ban [время] [причина] · бан, по умолчанию навсегда",
-    "/kick · выгнать без бана",
-    "/unmute · /unwarn · /unban · снять",
-    "/warns · предупреждения человека или свои",
+    "<b>Модератор</b>",
+    "/mute · /unmute · /warn · /unwarn · /warns",
+    "/ban · /unban · /kick · /attack",
+    "/del · /pin · /unpin · /link",
+    "/game · /list · /close · /open · /fk 30 · /random 36 · /endgame",
+    "+триггер слово (ответом) · -триггер слово · триггеры",
+    "+топ · +топ игра · +топ 3д · -топ (ответом)",
     "",
-    "<b>Чат</b>",
-    "/del · удалить сообщение",
-    "/pin · /unpin · закрепить, открепить",
-    "/link · ссылка-приглашение",
-    "/attack · режим атаки",
+    "<b>Админ</b>",
+    "/mod · /unmod: назначить и снять модератора (ответом)",
+    "/trust · /untrust: белый список (ответом)",
+    "/settings · /chat",
     "",
-    "<b>Управление</b>",
-    "/whitelist · /mod · белый список и модераторы (создатель)",
-    "/settings · настройки · /chat · права бота · /v · пинг",
+    "<b>Владелец</b>",
+    "/adm: назначить админа (ответом)",
+    "",
+    "<b>Все</b>",
+    "/profile или профиль · /leave: выписаться из списка",
 ], note="Команда и ответ бота сами исчезают через несколько секунд, это меняется в разделе Чистота.")
 
 
@@ -117,7 +118,7 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
             text, markup = await card(message.bot, chat_id, message.from_user.id)
             await message.answer(text, reply_markup=markup, link_preview_options=out.NO_PREVIEW)
             return
-        await message.answer(out.head("настраивать этот чат может создатель и те, кому он дал право ⚙️ настройки."))
+        await message.answer(out.head("настраивать этот чат могут админы бота и владелец (создатель чата)."))
         return
     await message.answer(start_text(), reply_markup=await start_markup(message.bot, message.from_user.id))
 
@@ -206,7 +207,7 @@ async def card(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboar
         row("🛡", "Защита", f"{protect_count(chat)} из 3"),
         row("🧹", "Чистота", f"{on} из {total}"),
         row("⚠️", "Наказания", warn_summary(chat)),
-        row("👥", "Права и доверие", f"с правами {mods}", f"белый список {wl}"),
+        row("👥", "Роли", f"назначено {mods}", f"белый список {wl}"),
         row("📜", "Журнал", "подключён" if chat["log_chat_id"] else "только в базе"),
     ]
     footer = [await rights_line(bot, chat_id)]
@@ -214,7 +215,7 @@ async def card(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboar
         footer.append(f"⏸ {out.esc(mode)}")
     text = screen(f"⚙️ {chat_title(chat)}", lines, footer=footer)
     rows = [[btn("🛡 Защита", f"g:pr:{chat_id}", accent=True), btn("🧹 Чистота", f"g:cl:{chat_id}")],
-            [btn("⚠️ Наказания", f"g:wr:{chat_id}"), btn("👥 Права", f"g:wl:{chat_id}")],
+            [btn("⚠️ Наказания", f"g:wr:{chat_id}"), btn("👥 Роли", f"g:wl:{chat_id}")],
             [btn("📜 Журнал", f"g:lg:{chat_id}"), btn("✉️ Тексты", f"g:te:{chat_id}")],
             [btn("🧩 Триггеры", f"g:tz:{chat_id}"), btn("ℹ️ О чате", f"g:in:{chat_id}")],
             back("g:chats:0", "⬅️ Мои чаты")]
@@ -344,21 +345,31 @@ async def trust_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, Inlin
     chat = await db.get_chat(chat_id)
     wl, holders = await db.whitelist(chat_id), await db.rights_list(chat_id)
     can_grant = await perms.has(bot, chat_id, user_id, perms.R_GRANT)
-    lines = [f"<b>🔑 Права в боте</b> · {len(holders)}"]
+    lines = [f"<b>⭐ Роли</b> · {len(holders)}"]
     lines += [f"• {out.esc(person(r))}: {perms.rights_text(r['flags'])}" for r in holders[:30]] or \
-        ["ни у кого, кроме создателя"]
+        ["ни у кого, кроме владельца"]
     lines += ["", f"<b>🤍 Белый список</b> · {len(wl)}"]
     lines += [f"• {out.esc(person(r))}" for r in wl[:30]] or ["пусто"]
-    text = screen("👥 Права", lines, path=f"⚙️ {chat_title(chat)}",
-                  note="Админка в Telegram сама прав в боте не даёт: всё может создатель, остальным он раздаёт "
-                       "права галочками. В чате: /mod ответом на человека. Белому списку можно ссылки и пересылки.")
+    text = screen("👥 Роли", lines, path=f"⚙️ {chat_title(chat)}",
+                  note="👑 Владелец: создатель чата. ⭐ Админ: всё в чате, назначает модераторов. 🛡 Модератор: "
+                       "наказания, удаление, игры, триггеры. Админка в Telegram сама ничего не даёт. "
+                       "В чате ответом: /mod, /adm, /unmod; белый список: /trust, /untrust.")
     rows = []
     if can_grant:
-        rows += grid([btn(f"🔑 {person(r)[:24]}", f"g:rk:{chat_id}:{r['user_id']}") for r in holders[:20]], 2)
-        rows.append(btn("➕ Выдать права", f"g:wl:{chat_id}:add", accent=True))
+        rows += grid([btn(f"{person(r)[:24]}", f"g:rk:{chat_id}:{r['user_id']}") for r in holders[:20]], 2)
+        rows.append(btn("➕ Назначить", f"g:wl:{chat_id}:add", accent=True))
     if await perms.has(bot, chat_id, user_id, perms.R_SETTINGS):
         rows += grid([btn(f"❌ {person(r)[:22]}", f"g:wl:{chat_id}:rw:{r['user_id']}") for r in wl[:20]], 2)
     return text, kb(*rows, btn("🌐 Разрешённые домены", f"g:dm:{chat_id}"), back(f"g:c:{chat_id}"))
+
+
+async def role_card(bot: Bot, chat_id: int, target: int, name: str) -> tuple[str, InlineKeyboardMarkup]:
+    r = await perms.role(bot, chat_id, target)
+    text = screen(f"⭐ {out.esc(name)}", [row("🎭", "Роль", perms.ROLE_TITLES[r])], path="👥 Роли")
+    rows = [[btn(("✅ " if r == perms.MOD else "") + "🛡 Модератор", f"g:rk:{chat_id}:{target}:mod"),
+             btn(("✅ " if r == perms.ADMIN else "") + "⭐ Админ", f"g:rk:{chat_id}:{target}:admin")],
+            btn("🚫 Снять роль", f"g:rk:{chat_id}:{target}:none")]
+    return text, kb(*rows, back(f"g:wl:{chat_id}"))
 
 
 KIND_NAMES = {"mute": "🔇 мут", "unmute": "🔊 снят мут", "warn": "⚠️ предупреждение", "unwarn": "↩️ снято предупр.",
@@ -568,7 +579,7 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
     need = {"wl": perms.R_SETTINGS | perms.R_GRANT, "rk": perms.R_SETTINGS | perms.R_GRANT,
             "tz": perms.R_SETTINGS | perms.R_TRIGGERS}.get(scr, perms.R_SETTINGS)
     if not await perms.flags(bot, chat_id, user_id) & need:
-        await cb.answer("Настраивать может создатель чата и те, кому он дал право ⚙️ настройки.", show_alert=True)
+        await cb.answer("Настраивать могут админы бота и владелец (создатель чата).", show_alert=True)
         return
     chat = await db.ensure_chat(chat_id)
 
@@ -652,21 +663,37 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
     elif scr == "wl":
         if op == "add":
             if not await perms.has(bot, chat_id, user_id, perms.R_GRANT):
-                await cb.answer("Нужно право выдавать права.", show_alert=True)
+                await cb.answer("Назначать может админ или владелец.", show_alert=True)
                 return
-            await ask(cb, fsm, "grant", chat_id, "Пришлите @username или ID человека из этого чата.")
+            await ask(cb, fsm, "grant", chat_id, "Кого назначить? Пришлите @username или ID человека из этого чата.")
             return
         if op == "rw" and arg.lstrip("-").isdigit():
             await db.remove_whitelist(chat_id, int(arg))
         await show(cb, *await trust_screen(bot, chat_id, user_id))
 
-    elif scr == "rk" and op.isdigit():   # карточка прав человека
-        from guard.handlers.moderation import rights_card
+    elif scr == "rk" and op.isdigit():   # роль человека
         target = int(op)
         name = await db.member_name(chat_id, target) or str(target)
-        text, markup = rights_card(chat_id, target, name, await db.rights_of(chat_id, target))
-        markup.inline_keyboard.append([btn("⬅️ Назад", f"g:wl:{chat_id}")])
-        await show(cb, text, markup)
+        if arg in ("mod", "admin", "none"):
+            new = {"mod": perms.MOD, "admin": perms.ADMIN, "none": perms.NONE}[arg]
+            problem = await perms.can_set_role(bot, chat_id, user_id, target, new)
+            if problem:
+                await cb.answer(problem[:1].upper() + problem[1:], show_alert=True)
+                return
+            old = await perms.role(bot, chat_id, target)
+            if old != new:
+                await perms.set_role(chat_id, target, new, user_id)
+                from guard import commands, texts
+                await commands.refresh_member(bot, chat_id, target)
+                who_ = out.mention(target, name)
+                admin = out.mention(user_id, out.full_name(cb.from_user))
+                if new:
+                    await texts.send(bot, chat, "role_admin" if new == perms.ADMIN else "role_mod", ttl=0,
+                                     user=who_, admin=admin)
+                else:
+                    await texts.send(bot, chat, "role_removed", ttl=0, user=who_, admin=admin,
+                                     role=perms.ROLE_TITLES[old].split(" ", 1)[-1].lower())
+        await show(cb, *await role_card(bot, chat_id, target, name))
 
     elif scr == "lg":
         if op == "set":
@@ -683,7 +710,7 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
 
     elif scr == "tz":
         if not await perms.has(bot, chat_id, user_id, perms.R_TRIGGERS):
-            await cb.answer("Нужно право 🧩 триггеры.", show_alert=True)
+            await cb.answer("Это для модераторов и админов.", show_alert=True)
             return
         if op == "add":
             await ask(cb, fsm, "trig_word", chat_id, "Пришлите слово (или пару слов), на которое бот будет отвечать.")
@@ -877,11 +904,8 @@ async def on_input(message: Message, state: FSMContext, bot: Bot) -> None:
             await message.answer("Не нашёл такого человека: я знаю только тех, кто писал в чате при мне. "
                                  "Пришлите @username или ID ещё раз, или /cancel")
             return
-        from guard.handlers.moderation import rights_card
         await state.clear()
-        text, markup = rights_card(chat_id, row["user_id"], row["name"] or raw,
-                                   await db.rights_of(chat_id, row["user_id"]))
-        markup.inline_keyboard.append([btn("⬅️ К правам", f"g:wl:{chat_id}")])
+        text, markup = await role_card(bot, chat_id, row["user_id"], row["name"] or raw)
         await message.answer(text, reply_markup=markup)
         return
     elif kind == "log":

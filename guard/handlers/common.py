@@ -97,6 +97,8 @@ async def my_status(event: ChatMemberUpdated, bot: Bot) -> None:
     now_in = new in ("member", "administrator", "restricted")
     if now_in:
         await db.ensure_chat(chat.id, chat.title or "", chat.username or "")
+        from guard import commands
+        out.spawn(commands.refresh_chat(bot, chat.id))  # меню команд создателю и ролям
     if now_in and not was_in:
         log.info("Добавили в чат %s %s", chat.id, chat.title)
         text = "подключена. Все автоматические защиты выключены, админы включают их в /settings."
