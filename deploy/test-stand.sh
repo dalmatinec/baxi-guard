@@ -8,6 +8,7 @@
 #   bash /opt/baxi-guard-test/deploy/test-stand.sh install
 #
 #   bash /opt/baxi-guard-test/deploy/test-stand.sh update    # свежий код из веток и перезапуск
+#   bash /opt/baxi-guard-test/deploy/test-stand.sh tokens    # сменить тестовые токены (ввод скрыт)
 #   bash /opt/baxi-guard-test/deploy/test-stand.sh status    # живы ли оба
 #   bash /opt/baxi-guard-test/deploy/test-stand.sh logs      # логи обоих (Ctrl+C выйти)
 #   bash /opt/baxi-guard-test/deploy/test-stand.sh stop      # остановить оба
@@ -203,6 +204,46 @@ cmd_status() {
     echo "     модератор $(git -C "$GUARD_DIR" log -1 --format='%h %s' 2>/dev/null | cut -c1-70)"
 }
 
+ask_new_token() {  # ask_new_token "подсказка" -> новый токен или пусто (оставить как есть). Ввод не виден
+    local prompt="$1" token
+    while true; do
+        read -rsp "$prompt" token; echo >&2
+        token=$(echo "$token" | tr -d '[:space:]')
+        [ -z "$token" ] && { echo ""; return; }
+        if ! [[ "$token" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]]; then echo "Не похоже на токен, ещё раз" >&2; continue; fi
+        if is_prod_token "$token"; then echo "Это токен БОЕВОГО бота. Нужен отдельный тестовый от @BotFather" >&2; continue; fi
+        echo "$token"; return
+    done
+}
+
+cmd_tokens() {
+    local benv="$BAXI_DIR/.env" genv="$GUARD_DIR/.env" btoken gtoken bold gold
+    [ -f "$benv" ] && [ -f "$genv" ] || { echo "Стенд ещё не поставлен: сначала install"; exit 1; }
+    bold=$(get_env BOT_TOKEN "$benv"); gold=$(get_env BOT_TOKEN "$genv")
+    echo "== Смена токенов стенда. Ввод не виден на экране. Enter без текста: оставить как есть."
+    echo "   Сейчас: тестовый Бакси бот ${bold%%:*}, тестовый модератор бот ${gold%%:*}"
+    btoken=$(ask_new_token "Новый токен ТЕСТОВОГО Бакси: ")
+    gtoken=$(ask_new_token "Новый токен ТЕСТОВОГО модератора: ")
+    [ -n "$btoken$gtoken" ] || { echo "Ничего не поменял"; exit 0; }
+    if [ "${btoken:-$bold}" = "${gtoken:-$gold}" ]; then echo "Токены одинаковые, нужны два разных бота"; exit 1; fi
+    if [ -n "$btoken" ]; then
+        set_env "$benv" BOT_TOKEN "$btoken"
+        set_env "$genv" BAXI_BOT_ID "${btoken%%:*}"   # модератор узнаёт Бакси по ID бота
+        echo "✅ Тестовый Бакси: теперь бот ${btoken%%:*}"
+    fi
+    if [ -n "$gtoken" ]; then
+        set_env "$genv" BOT_TOKEN "$gtoken"
+        echo "✅ Тестовый модератор: теперь бот ${gtoken%%:*}"
+    fi
+    chown baxitest:baxitest "$benv" && chmod 600 "$benv"
+    chown guardtest:guardtest "$genv" && chmod 600 "$genv"
+    systemctl restart "$BAXI_SVC" "$GUARD_SVC"
+    sleep 4
+    cmd_status
+    echo
+    echo "Новых ботов добавь в тестовую группу (модератору права админа), Бакси одобри в /admin."
+}
+
 cmd_logs() { journalctl -u "$BAXI_SVC" -u "$GUARD_SVC" -f -n 50; }
 cmd_stop() { systemctl stop "$BAXI_SVC" "$GUARD_SVC"; echo "Стенд остановлен"; }
 
@@ -221,9 +262,10 @@ cmd_remove() {
 case "${1:-install}" in
     install) cmd_install ;;
     update) cmd_update ;;
+    tokens) cmd_tokens ;;
     status) cmd_status ;;
     logs) cmd_logs ;;
     stop) cmd_stop ;;
     remove) cmd_remove ;;
-    *) echo "Команды: install | update | status | logs | stop | remove"; exit 1 ;;
+    *) echo "Команды: install | update | tokens | status | logs | stop | remove"; exit 1 ;;
 esac

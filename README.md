@@ -163,6 +163,7 @@ bash /opt/baxi-guard-test/deploy/test-stand.sh install   # спросит два
 | Что | Команда |
 |---|---|
 | Свежий код из веток | `bash /opt/baxi-guard-test/deploy/test-stand.sh update` |
+| Сменить тестовые токены (ввод скрыт, Enter: оставить) | `bash /opt/baxi-guard-test/deploy/test-stand.sh tokens` |
 | Живы ли | `bash /opt/baxi-guard-test/deploy/test-stand.sh status` |
 | Логи обоих | `bash /opt/baxi-guard-test/deploy/test-stand.sh logs` |
 | Остановить | `bash /opt/baxi-guard-test/deploy/test-stand.sh stop` |
