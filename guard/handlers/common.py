@@ -1,6 +1,7 @@
 """/v, /chat и что делать, когда бота добавили в чат или убрали."""
 
 import logging
+import re
 import time
 
 from aiogram import Bot, F, Router
@@ -65,6 +66,24 @@ async def chat_info(message: Message, chat_row: dict) -> None:
             f"Права бота: {rights}\n"
             f"Защита: {protections_line(chat_row)}")
     await done(message, chat_row, text)
+
+
+# ---------- профиль ----------
+
+PROFILE_WORDS = re.compile(r"^\s*(профиль|мой профиль)\s*[!.]?\s*$", re.I)
+
+
+@router.message(GROUP, Command("profile"))
+@router.message(GROUP, F.text.regexp(PROFILE_WORDS))
+async def profile_cmd(message: Message, chat_row: dict, allowed: bool) -> None:
+    """Профиль для всех участников. Ответом на сообщение: профиль того человека."""
+    from guard import profile
+    from guard.handlers.moderation import real_reply
+    if not allowed or not message.from_user or perms.is_anon_admin(message):
+        return
+    rt = real_reply(message)
+    who = rt.from_user if rt and rt.from_user and not rt.from_user.is_bot and not rt.sender_chat else message.from_user
+    await profile.send(message.bot, chat_row, who, reply_to=message)
 
 
 # ---------- бота добавили, повысили, убрали ----------

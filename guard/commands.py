@@ -15,9 +15,10 @@ ADMIN = [("mute", "Мут: ответом, время, причина"), ("unmut
          ("warns", "Предупреждения человека"), ("unwarn", "Снять последнее предупреждение"),
          ("ban", "Бан: ответом, время, причина"), ("unban", "Разбан"), ("kick", "Выгнать без бана"),
          ("del", "Удалить сообщение"), ("pin", "Закрепить"), ("unpin", "Открепить"), ("link", "Ссылка-приглашение"), ("attack", "Режим атаки"),
-         ("whitelist", "Белый список"), ("settings", "Настройки модерации"), ("chat", "Чат и права бота"),
-         ("v", "Пинг")]
+         ("whitelist", "Белый список"), ("mod", "Права в боте (ответом)"), ("settings", "Настройки"),
+         ("chat", "Чат и права бота"), ("profile", "Профиль"), ("v", "Пинг")]
 OWNER = [("admin", "Все чаты и здоровье бота"), *PRIVATE]
+GROUP = [("profile", "Мой профиль")]
 
 
 def _cmds(items: list[tuple[str, str]]) -> list[BotCommand]:
@@ -27,7 +28,7 @@ def _cmds(items: list[tuple[str, str]]) -> list[BotCommand]:
 async def set_commands(bot: Bot) -> None:
     try:
         await bot.set_my_commands(_cmds(PRIVATE), scope=BotCommandScopeAllPrivateChats())
-        await bot.delete_my_commands(scope=BotCommandScopeAllGroupChats())  # участникам бот невидим
+        await bot.set_my_commands(_cmds(GROUP), scope=BotCommandScopeAllGroupChats())  # участникам только профиль
         await bot.set_my_commands(_cmds(ADMIN), scope=BotCommandScopeAllChatAdministrators())
         for owner in config.OWNER_IDS:
             try:

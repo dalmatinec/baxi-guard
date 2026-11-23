@@ -23,6 +23,8 @@ async def main() -> None:
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 
     await db.connect()
+    from guard import texts
+    await texts.init()  # свои тексты чатов: премиум-эмодзи, картинки, кнопки
     from guard.handlers.admin import load_pack
     await load_pack()  # премиум-эмодзи владельца
     from guard import perms

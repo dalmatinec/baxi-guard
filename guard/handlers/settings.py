@@ -215,7 +215,8 @@ async def card(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboar
     text = screen(f"⚙️ {chat_title(chat)}", lines, footer=footer)
     rows = [[btn("🛡 Защита", f"g:pr:{chat_id}", accent=True), btn("🧹 Чистота", f"g:cl:{chat_id}")],
             [btn("⚠️ Наказания", f"g:wr:{chat_id}"), btn("👥 Права", f"g:wl:{chat_id}")],
-            [btn("📜 Журнал", f"g:lg:{chat_id}"), btn("ℹ️ О чате", f"g:in:{chat_id}")],
+            [btn("📜 Журнал", f"g:lg:{chat_id}"), btn("✉️ Тексты", f"g:te:{chat_id}")],
+            btn("ℹ️ О чате", f"g:in:{chat_id}"),
             back("g:chats:0", "⬅️ Мои чаты")]
     return text, kb(*rows)
 
@@ -404,6 +405,82 @@ async def info_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, Inline
     return text, kb(*rows, back(f"g:c:{chat_id}"))
 
 
+# ---------- ✉️ тексты ----------
+
+BUTTONS_HELP = ("Каждая кнопка с новой строки: <code>Текст - ссылка</code>. Несколько в один ряд через "
+                "<code>|</code>.\nПример:\n<code>📢 Канал - https://t.me/channel | 🛒 Магазин - https://example.com</code>")
+
+
+async def texts_home(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    from guard import texts
+    chat = await db.get_chat(chat_id)
+    own = await texts.custom_keys(chat_id)
+    lines, buttons = [], []
+    for n, group in enumerate(texts.groups()):
+        keys = texts.keys_of(group)
+        mine = len([k for k in keys if k in own])
+        icon = texts.GROUP_ICONS.get(group, "📝")
+        lines.append(row(icon, group, f"{len(keys)}", f"✏️ своих {mine}" if mine else ""))
+        buttons.append(btn(f"{icon} {group}", f"g:tg:{chat_id}:{n}"))
+    text = screen("✉️ Тексты", lines, path=f"⚙️ {chat_title(chat)}",
+                  note="Любое сообщение бота в этом чате можно переписать под себя: свой текст с премиум-эмодзи, "
+                       "картинка, кнопки-ссылки (например, реклама). Другие чаты это не меняет.")
+    return text, kb(*grid(buttons, 2), back(f"g:c:{chat_id}"))
+
+
+async def texts_group(chat_id: int, n: int) -> tuple[str, InlineKeyboardMarkup]:
+    from guard import texts
+    group = texts.groups()[n]
+    own = await texts.custom_keys(chat_id)
+    buttons = [btn(("✏️ " if k in own else "") + texts.TEXTS[k][1], f"g:ti:{chat_id}:{k}") for k in texts.keys_of(group)]
+    text = screen(f"{texts.GROUP_ICONS.get(group, '📝')} {group}", ["Нажми на текст, чтобы посмотреть и поменять."],
+                  path="✉️ Тексты", note="✏️ значит в этом чате уже свой текст.")
+    return text, kb(*grid(buttons, 1), back(f"g:te:{chat_id}"))
+
+
+async def text_item(chat_id: int, key: str) -> tuple[str, InlineKeyboardMarkup]:
+    from guard import texts
+    group, title, _default, subs = texts.TEXTS[key]
+    own = await texts.override(chat_id, key) or {}
+    t = await texts.template(chat_id, key)
+    hint = "\n".join(f"<code>{{{k}}}</code> {v[0]}" for k, v in subs.items())
+    lines = [row("📝", "Текст", "свой" if own.get("html") else "стандартный"),
+             row("🖼", "Картинка", "есть" if t.photo else "нет"),
+             row("🔘", "Кнопки", str(sum(len(r) for r in t.buttons)) if t.buttons else "нет"),
+             DIV, "<b>Так выглядит:</b>", texts.sample(key, t.html), DIV, "<b>Подстановки</b>", hint]
+    text = screen(title, lines, path="✉️ Тексты")
+    if len(text) > 4000:
+        text = text[:3990] + "…"
+    rows = [[btn("✏️ Текст", f"g:tw:{chat_id}:{key}:text", accent=True), btn("🖼 Картинка", f"g:tw:{chat_id}:{key}:photo")],
+            [btn("🔘 Кнопки", f"g:tw:{chat_id}:{key}:buttons"), btn("👁 Как в чате", f"g:tv:{chat_id}:{key}")]]
+    extra = []
+    if t.photo:
+        extra.append(btn("🗑 Без картинки", f"g:tw:{chat_id}:{key}:nophoto"))
+    if t.buttons:
+        extra.append(btn("🗑 Без кнопок", f"g:tw:{chat_id}:{key}:nobuttons"))
+    if extra:
+        rows.append(extra)
+    if own:
+        rows.append(btn("↩️ Вернуть стандартный", f"g:tr:{chat_id}:{key}"))
+    return text, kb(*rows, back(f"g:tg:{chat_id}:{texts.groups().index(group)}"))
+
+
+async def preview(cb: CallbackQuery, chat_id: int, key: str) -> None:
+    from guard import texts
+    t = await texts.template(chat_id, key)
+    html = texts.sample(key, t.html)
+    markup = texts.markup(t)
+    try:
+        if t.photo and len(html) <= texts.MAX_CAPTION:
+            await cb.message.answer_photo(t.photo, caption=html, reply_markup=markup)
+        else:
+            if t.photo:
+                await cb.message.answer_photo(t.photo)
+            await cb.message.answer(html, reply_markup=markup)
+    except TelegramAPIError as exc:
+        await cb.message.answer(f"⚠️ Telegram не принял этот текст: {out.esc(exc.message)}")
+
+
 # ---------- нажатия ----------
 
 async def show(cb: CallbackQuery, text: str, markup: InlineKeyboardMarkup) -> None:
@@ -566,6 +643,36 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
 
     elif scr == "in":
         await show(cb, *await info_screen(bot, chat_id, user_id))
+
+    elif scr == "te":
+        await show(cb, *await texts_home(chat_id))
+    elif scr == "tg" and op.isdigit():
+        await show(cb, *await texts_group(chat_id, int(op)))
+    elif scr in ("ti", "tw", "tv", "tr"):
+        from guard import texts
+        if op not in texts.TEXTS:
+            await cb.answer()
+            return
+        if scr == "tv":
+            await cb.answer()
+            await preview(cb, chat_id, op)
+            return
+        if scr == "tr":
+            await texts.reset(chat_id, op)
+        elif scr == "tw":
+            if arg == "nophoto":
+                await texts.set_text(chat_id, op, photo="")
+            elif arg == "nobuttons":
+                await texts.set_text(chat_id, op, buttons="")
+            elif arg in ("text", "photo", "buttons"):
+                prompts = {"text": "Пришлите новый текст одним сообщением. Премиум-эмодзи, жирный, курсив и ссылки "
+                                   "сохранятся как есть. Подстановки в фигурных скобках бот заменит сам.",
+                           "photo": "Пришлите картинку. Она встанет над текстом (подпись до 1024 символов, длиннее: "
+                                    "картинка и текст отдельно).",
+                           "buttons": BUTTONS_HELP}
+                await ask(cb, fsm, f"text:{op}:{arg}", chat_id, prompts[arg])
+                return
+        await show(cb, *await text_item(chat_id, op))
     else:
         await cb.answer()
 
@@ -641,6 +748,32 @@ async def on_input(message: Message, state: FSMContext, bot: Bot) -> None:
             note += "\nЧасть строк не похожа на домены, пропустил."
         await message.answer(note)
         nxt = await domains_screen(chat_id)
+    elif kind and kind.startswith("text:"):
+        from guard import texts
+        _, key, what = kind.split(":")
+        if what == "text":
+            if not message.text:
+                await message.answer("Нужен текст. Пришлите ещё раз или /cancel")
+                return
+            await texts.set_text(chat_id, key, html=message.html_text[:texts.MAX_HTML])
+            note = "✅ Текст сохранён"
+        elif what == "photo":
+            if not message.photo:
+                await message.answer("Нужна картинка. Пришлите ещё раз или /cancel")
+                return
+            await texts.set_text(chat_id, key, photo=message.photo[-1].file_id)
+            note = "✅ Картинка сохранена"
+        else:
+            rows_, bad = texts.parse_buttons(message.text or "")
+            if not rows_:
+                await message.answer("Не нашёл ни одной кнопки.\n\n" + BUTTONS_HELP)
+                return
+            await texts.set_text(chat_id, key, buttons=texts.buttons_text(rows_))
+            note = f"✅ Кнопок: {sum(len(r) for r in rows_)}"
+            if bad:
+                note += f"\nНе понял: {out.esc(', '.join(bad)[:200])}"
+        await message.answer(note)
+        nxt = await text_item(chat_id, key)
     elif kind == "grant":
         raw = (message.text or "").strip()
         row = await db.find_by_username(chat_id, raw) if raw.startswith("@") else \

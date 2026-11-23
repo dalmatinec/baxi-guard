@@ -292,8 +292,9 @@ async def cmd_kick(message: Message, chat_row: dict, allowed: bool) -> None:
     except ActionError as exc:
         await done(message, chat_row, str(exc))
         return
-    await done(message, chat_row, f"{out.mention(target.user_id, target.name)}: исключение из чата без бана."
-                                  + reason_line(args.reason))
+    await texts.send(message.bot, chat_row, "mod_kick", reply_to=message, user=who(target),
+                     reason=out.esc(args.reason), admin=admin_of(message))
+    drop_command(message, chat_row)
 
 
 # ---------- закреп, ссылка, удаление ----------

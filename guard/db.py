@@ -117,7 +117,17 @@ CREATE TABLE IF NOT EXISTS members (
     joined_at  INTEGER NOT NULL DEFAULT 0,       -- 0: вход не видели (был в чате до бота)
     msg_count  INTEGER NOT NULL DEFAULT 0,
     last_seen  INTEGER NOT NULL DEFAULT 0,
+    first_seen INTEGER NOT NULL DEFAULT 0,       -- когда бот впервые увидел человека в чате
     PRIMARY KEY (chat_id, user_id)
+);
+
+-- сообщения по часам: «сообщений за 24 часа» в профиле (храним двое суток)
+CREATE TABLE IF NOT EXISTS member_hours (
+    chat_id  INTEGER NOT NULL,
+    user_id  INTEGER NOT NULL,
+    hour     INTEGER NOT NULL,
+    n        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, user_id, hour)
 );
 CREATE INDEX IF NOT EXISTS members_username ON members (username);
 
@@ -165,8 +175,21 @@ async def connect(path=None) -> None:
     await _db.execute("PRAGMA journal_mode=WAL")
     await _db.execute("PRAGMA synchronous=NORMAL")
     await _db.execute("PRAGMA busy_timeout=5000")
+    await _migrate_before()
     await _db.executescript(SCHEMA)
     await _db.commit()
+
+
+async def _migrate_before() -> None:
+    """Новые столбцы в старой базе (до создания индексов из SCHEMA)."""
+    async with _db.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'members'") as cur:
+        if await cur.fetchone() is None:
+            return
+    async with _db.execute("PRAGMA table_info(members)") as cur:
+        cols = {r[1] for r in await cur.fetchall()}
+    if "first_seen" not in cols:
+        await _db.execute("ALTER TABLE members ADD COLUMN first_seen INTEGER NOT NULL DEFAULT 0")
+        await _db.execute("UPDATE members SET first_seen = CASE WHEN joined_at > 0 THEN joined_at ELSE last_seen END")
 
 
 async def close() -> None:
@@ -255,10 +278,15 @@ async def migrate_chat(old_id: int, new_id: int) -> None:
 async def touch_member(chat_id: int, user_id: int, username: str, name: str, *, message: bool = True) -> dict:
     ts = now()
     await conn().execute(
-        "INSERT INTO members (chat_id, user_id, username, name, msg_count, last_seen) VALUES (?, ?, ?, ?, ?, ?) "
+        "INSERT INTO members (chat_id, user_id, username, name, msg_count, last_seen, first_seen) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT (chat_id, user_id) DO UPDATE SET username = excluded.username, name = excluded.name, "
         "msg_count = msg_count + excluded.msg_count, last_seen = excluded.last_seen",
-        (chat_id, user_id, (username or "").lower(), name, 1 if message else 0, ts))
+        (chat_id, user_id, (username or "").lower(), name, 1 if message else 0, ts, ts))
+    if message:
+        await conn().execute("INSERT INTO member_hours (chat_id, user_id, hour, n) VALUES (?, ?, ?, 1) "
+                             "ON CONFLICT (chat_id, user_id, hour) DO UPDATE SET n = n + 1",
+                             (chat_id, user_id, ts // 3600))
     await conn().commit()
     return await get_member(chat_id, user_id)
 
@@ -266,10 +294,10 @@ async def touch_member(chat_id: int, user_id: int, username: str, name: str, *, 
 async def member_joined(chat_id: int, user_id: int, username: str, name: str) -> None:
     """Видели вход: человек новичок, счётчик сообщений с нуля."""
     await _exec(
-        "INSERT INTO members (chat_id, user_id, username, name, joined_at, msg_count, last_seen) "
-        "VALUES (?, ?, ?, ?, ?, 0, ?) ON CONFLICT (chat_id, user_id) DO UPDATE SET username = excluded.username, "
+        "INSERT INTO members (chat_id, user_id, username, name, joined_at, msg_count, last_seen, first_seen) "
+        "VALUES (?, ?, ?, ?, ?, 0, ?, ?) ON CONFLICT (chat_id, user_id) DO UPDATE SET username = excluded.username, "
         "name = excluded.name, joined_at = excluded.joined_at, msg_count = 0",
-        (chat_id, user_id, (username or "").lower(), name, now(), now()))
+        (chat_id, user_id, (username or "").lower(), name, now(), now(), now()))
 
 
 async def get_member(chat_id: int, user_id: int) -> dict | None:
@@ -283,6 +311,12 @@ async def find_by_username(chat_id: int, username: str) -> dict | None:
         return None
     row = await _one("SELECT * FROM members WHERE chat_id = ? AND username = ?", (chat_id, username))
     return row or await _one("SELECT * FROM members WHERE username = ? ORDER BY last_seen DESC LIMIT 1", (username,))
+
+
+async def messages_24h(chat_id: int, user_id: int) -> int:
+    row = await _one("SELECT COALESCE(SUM(n), 0) AS n FROM member_hours WHERE chat_id = ? AND user_id = ? AND hour > ?",
+                     (chat_id, user_id, now() // 3600 - 24))
+    return row["n"] if row else 0
 
 
 async def member_name(chat_id: int, user_id: int) -> str:
@@ -543,4 +577,5 @@ async def cleanup() -> int:
     cutoff = now() - ACTIONS_KEEP_DAYS * 86400
     n = await _exec("DELETE FROM actions WHERE ts < ?", (cutoff,))
     await _exec("DELETE FROM warns WHERE active = 0 AND ts < ?", (cutoff,))
+    await _exec("DELETE FROM member_hours WHERE hour < ?", (now() // 3600 - 48,))
     return n
