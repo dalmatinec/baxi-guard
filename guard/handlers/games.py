@@ -66,7 +66,7 @@ async def admin_ok(bot: Bot, message: Message) -> bool:
 
 def games_menu() -> tuple[str, InlineKeyboardMarkup]:
     rows = [[(f"{g.icon} {g.title}", f"lg:pick:{g.kind}")] for g in GAMES.values()]
-    return "🎮 <b>Игры</b>\n━━━━━━━━━━━━━━\nВыбери игру:", kb(rows + [[("✖️ Отмена", "lg:cancel")]])
+    return "🎮 <b>Игры</b>\n➖➖➖➖➖\nВыбери игру:", kb(rows + [[("✖️ Отмена", "lg:cancel")]])
 
 
 @router.message(Command("game"))
@@ -163,7 +163,7 @@ async def on_button(cb: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         g = GAMES[parts[2]]
         rows = [[(title, f"lg:mode:{g.kind}:{code}")] for code, title in g.modes]
         await cb.answer()
-        return await cb.message.edit_text(f"{g.icon} <b>{g.title}</b>\n━━━━━━━━━━━━━━\nКак записываться?",
+        return await cb.message.edit_text(f"{g.icon} <b>{g.title}</b>\n➖➖➖➖➖\nКак записываться?",
                                           parse_mode="HTML", reply_markup=kb(rows + [[("⬅️ Назад", "lg:new")]]))
     if action == "mode":   # ФК при запуске не спрашиваем: его ставят по желанию кнопкой 🎯 ФК или /fk
         await cb.answer()
@@ -198,7 +198,7 @@ async def start_game(bot: Bot, setup_msg: Message, kind: str, mode: str, fk: int
     g = GAMES[kind]
     fk_text = f" · ФК {fk}" if fk else ""
     if mode == "hashtag":
-        await setup_msg.edit_text(f"{g.icon} <b>{g.title}</b>{fk_text}\n━━━━━━━━━━━━━━\n"
+        await setup_msg.edit_text(f"{g.icon} <b>{g.title}</b>{fk_text}\n➖➖➖➖➖\n"
                                   "Отправь хэштег одним словом, например <b>#рулетка</b>. Я закреплю список, "
                                   "и все, кто пришлёт этот хэштег, попадут в него.", parse_mode="HTML",
                                   reply_markup=kb([[("✖️ Отмена", "lg:cancel")]]))
@@ -235,7 +235,7 @@ async def on_own_fk(message: Message, bot: Bot, state: FSMContext) -> None:
         pass
     if data["mode"] == "hashtag":
         g = GAMES[data["kind"]]
-        await say(bot, message.chat.id, f"{g.icon} <b>{g.title}</b> · ФК {fk}\n━━━━━━━━━━━━━━\n"
+        await say(bot, message.chat.id, f"{g.icon} <b>{g.title}</b> · ФК {fk}\n➖➖➖➖➖\n"
                                         "Отправь хэштег одним словом, например <b>#рулетка</b>.", reply_to=message)
         return
     await core.post_list(bot, game)

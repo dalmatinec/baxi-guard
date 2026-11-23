@@ -54,9 +54,10 @@ async def on_trigger_command(message: Message, chat_row: dict, cmd: str, word: s
         if not items:
             await done(message, chat_row, "триггеров пока нет. Добавить: ответьте «+триггер слово» на сообщение.")
             return
-        words = ", ".join(out.esc(t["word"]) for t in items[:150])
-        more = f" и ещё {len(items) - 150}" if len(items) > 150 else ""
-        await done(message, chat_row, f"триггеры ({len(items)}): {words}{more}")
+        lines = [f"{i}. {out.esc(t['word'])}" for i, t in enumerate(items[:150], 1)]
+        if len(items) > 150:
+            lines.append(f"и ещё {len(items) - 150}")
+        await done(message, chat_row, f"триггеры ({len(items)}):\n" + "\n".join(lines))
         return
     if cmd == "del":
         ok = await triggers.delete(chat_id, word)

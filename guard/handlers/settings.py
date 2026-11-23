@@ -21,7 +21,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from guard import access, config, db, out, perms
 from guard.links import normalize_domain
 from guard.parse import human_duration, human_for
-from guard.ui import DIV, back, btn, chat_title, check, cycle, grid, kb, row, screen
+from guard.ui import DIV, DIV_SHORT, back, btn, chat_title, check, cycle, grid, kb, row, screen
 from guard.ui import state as word
 
 log = logging.getLogger(__name__)
@@ -537,7 +537,8 @@ async def triggers_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     from guard import triggers
     chat = await db.get_chat(chat_id)
     items = list((await triggers.all_of(chat_id)).values())
-    lines = [f"{KIND_ICONS.get(t['kind'], '💬')} {out.esc(t['word'])}" for t in items[:80]] or ["пока нет"]
+    lines = [f"{i}. {KIND_ICONS.get(t['kind'], '💬')} {out.esc(t['word'])}"
+             for i, t in enumerate(items[:80], 1)] or ["пока нет"]
     if len(items) > 80:
         lines.append(f"и ещё {len(items) - 80}")
     text = screen("🧩 Триггеры", lines, path=f"⚙️ {chat_title(chat)}",
@@ -577,7 +578,7 @@ async def show(cb: CallbackQuery, text: str, markup: InlineKeyboardMarkup) -> No
 async def ask(cb: CallbackQuery, fsm: FSMContext, kind: str, chat_id: int, prompt: str) -> None:
     await fsm.set_state(Input.waiting)
     await fsm.update_data(kind=kind, chat_id=chat_id)
-    await cb.message.answer(f"✏️ {prompt}\n{DIV}\n<i>Отменить: /cancel</i>")
+    await cb.message.answer(f"✏️ {prompt}\n{DIV_SHORT}\n<i>Отменить: /cancel</i>")
     await cb.answer()
 
 
@@ -905,7 +906,7 @@ async def on_input(message: Message, state: FSMContext, bot: Bot) -> None:
             return
         await state.update_data(kind=f"trig_body:{word}")
         await message.answer(f"✏️ Теперь пришлите, чем отвечать на \"{out.esc(word)}\": текст (можно с премиум-эмодзи), "
-                             f"фото, видео, гифку, стикер, голосовое или файл.\n{DIV}\n<i>Отменить: /cancel</i>")
+                             f"фото, видео, гифку, стикер, голосовое или файл.\n{DIV_SHORT}\n<i>Отменить: /cancel</i>")
         return
     elif kind and kind.startswith("trig_body:"):
         from guard import triggers

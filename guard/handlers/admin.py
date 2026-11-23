@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from guard import access, buttons, config, db, health, out, perms
-from guard.ui import DIV, back, btn, chat_title, grid, kb, row, screen
+from guard.ui import DIV_SHORT, back, btn, chat_title, grid, kb, row, screen
 
 router = Router(name="admin")
 router.message.filter(F.chat.type == "private")
@@ -242,12 +242,12 @@ async def on_bb(cb: CallbackQuery, state: FSMContext) -> tuple[str, InlineKeyboa
         from guard.handlers.settings import Input
         await state.set_state(Input.waiting)
         await state.update_data(kind=f"btn_icon:{r['id']}", chat_id=0)
-        await cb.message.answer(f"✏️ Пришлите премиум-эмодзи для значка кнопки\n{DIV}\n<i>Отменить: /cancel</i>")
+        await cb.message.answer(f"✏️ Пришлите премиум-эмодзи для значка кнопки\n{DIV_SHORT}\n<i>Отменить: /cancel</i>")
         await cb.answer()
         return None
     elif op == "demo":
         sample = buttons.apply(btn(r["sample"] or "Кнопка", r["pattern"].replace("*", "0")))
-        await cb.message.answer(f"Так кнопка выглядит сейчас:\n{DIV}",
+        await cb.message.answer(f"Так кнопка выглядит сейчас:\n{DIV_SHORT}",
                                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                                     sample.model_copy(update={"callback_data": "bb:none"})]]))
         await cb.answer()
@@ -301,7 +301,7 @@ async def on_admin(cb: CallbackQuery, bot: Bot, state: FSMContext) -> None:
             from guard.handlers.settings import Input
             await state.set_state(Input.waiting)
             await state.update_data(kind="emoji", chat_id=0)
-            await cb.message.answer(f"✏️ Пришлите сообщение с премиум-эмодзи\n{DIV}\n<i>Отменить: /cancel</i>")
+            await cb.message.answer(f"✏️ Пришлите сообщение с премиум-эмодзи\n{DIV_SHORT}\n<i>Отменить: /cancel</i>")
             await cb.answer()
             return
         if op == "clr":
