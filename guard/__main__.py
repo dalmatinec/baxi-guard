@@ -27,6 +27,8 @@ async def main() -> None:
     await texts.init()  # свои тексты чатов: премиум-эмодзи, картинки, кнопки
     from guard.gamecore import core as gamecore
     await gamecore.init()  # игры со списком: рулетка, топы, ФК
+    from guard import triggers
+    await triggers.init()  # триггеры чатов
     from guard.handlers.admin import load_pack
     await load_pack()  # премиум-эмодзи владельца
     from guard import perms

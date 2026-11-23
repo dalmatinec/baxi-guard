@@ -216,7 +216,7 @@ async def card(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboar
     rows = [[btn("🛡 Защита", f"g:pr:{chat_id}", accent=True), btn("🧹 Чистота", f"g:cl:{chat_id}")],
             [btn("⚠️ Наказания", f"g:wr:{chat_id}"), btn("👥 Права", f"g:wl:{chat_id}")],
             [btn("📜 Журнал", f"g:lg:{chat_id}"), btn("✉️ Тексты", f"g:te:{chat_id}")],
-            btn("ℹ️ О чате", f"g:in:{chat_id}"),
+            [btn("🧩 Триггеры", f"g:tz:{chat_id}"), btn("ℹ️ О чате", f"g:in:{chat_id}")],
             back("g:chats:0", "⬅️ Мои чаты")]
     return text, kb(*rows)
 
@@ -399,7 +399,7 @@ async def info_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, Inline
     else:
         lines += [f"{'❌' if name in miss else '✅'} {name}" for name in perms.RIGHTS.values()]
     text = screen("ℹ️ О чате", lines, path=f"⚙️ {chat_title(chat)}")
-    rows = []
+    rows = [btn("🧰 Перенести в другой чат", f"g:mv:{chat_id}")]
     if perms.is_owner(user_id):
         rows.append(btn("🔑 Своя подписка", f"a:sub:{chat_id}"))
     return text, kb(*rows, back(f"g:c:{chat_id}"))
@@ -481,6 +481,41 @@ async def preview(cb: CallbackQuery, chat_id: int, key: str) -> None:
         await cb.message.answer(f"⚠️ Telegram не принял этот текст: {out.esc(exc.message)}")
 
 
+# ---------- 🧩 триггеры ----------
+
+KIND_ICONS = {"text": "💬", "photo": "🖼", "video": "🎬", "animation": "🎞", "sticker": "🩷", "voice": "🎤",
+              "audio": "🎵", "document": "📄", "video_note": "⭕"}
+
+
+async def triggers_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    from guard import triggers
+    chat = await db.get_chat(chat_id)
+    items = list((await triggers.all_of(chat_id)).values())
+    lines = [f"{KIND_ICONS.get(t['kind'], '💬')} {out.esc(t['word'])}" for t in items[:80]] or ["пока нет"]
+    if len(items) > 80:
+        lines.append(f"и ещё {len(items) - 80}")
+    text = screen("🧩 Триггеры", lines, path=f"⚙️ {chat_title(chat)}",
+                  note="Напишут в чате слово целиком, бот ответит сохранённым: текстом с премиум-эмодзи, фото, "
+                       "видео, гифкой, стикером, голосовым или файлом.")
+    dels = [btn(f"🗑 {t['word'][:24]}", f"g:tz:{chat_id}:del:{t['id']}") for t in items[:30]]
+    return text, kb(btn("➕ Добавить", f"g:tz:{chat_id}:add", accent=True), *grid(dels, 2), back(f"g:c:{chat_id}"))
+
+
+# ---------- 🧰 перенос ----------
+
+async def move_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    chat = await db.get_chat(chat_id)
+    targets = [c for c in await my_chats(bot, user_id) if c["chat_id"] != chat_id]
+    lines = ["Куда перенести всё, что бот знает об этом чате: настройки, стоп-слова, домены, белый список, права, "
+             "тексты, триггеры, топы, предупреждения."]
+    if not targets:
+        lines += ["", "Других чатов нет. Добавьте бота в новый чат админом, и он появится здесь."]
+    text = screen("🧰 Перенос", lines, path=f"⚙️ {chat_title(chat)}",
+                  note="В новом чате это заменит то же самое. Старый чат останется как был.")
+    buttons = [btn(f"➡️ {(c['title'] or str(c['chat_id']))[:30]}", f"g:mv:{chat_id}:{c['chat_id']}") for c in targets[:30]]
+    return text, kb(*grid(buttons, 1), back(f"g:in:{chat_id}"))
+
+
 # ---------- нажатия ----------
 
 async def show(cb: CallbackQuery, text: str, markup: InlineKeyboardMarkup) -> None:
@@ -529,7 +564,8 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
         await show(cb, *await chats_screen(bot, user_id))
         return
 
-    need = perms.R_SETTINGS | perms.R_GRANT if scr in ("wl", "rk") else perms.R_SETTINGS
+    need = {"wl": perms.R_SETTINGS | perms.R_GRANT, "rk": perms.R_SETTINGS | perms.R_GRANT,
+            "tz": perms.R_SETTINGS | perms.R_TRIGGERS}.get(scr, perms.R_SETTINGS)
     if not await perms.flags(bot, chat_id, user_id) & need:
         await cb.answer("Настраивать может создатель чата и те, кому он дал право ⚙️ настройки.", show_alert=True)
         return
@@ -644,6 +680,40 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
     elif scr == "in":
         await show(cb, *await info_screen(bot, chat_id, user_id))
 
+    elif scr == "tz":
+        if not await perms.has(bot, chat_id, user_id, perms.R_TRIGGERS):
+            await cb.answer("Нужно право 🧩 триггеры.", show_alert=True)
+            return
+        if op == "add":
+            await ask(cb, fsm, "trig_word", chat_id, "Пришлите слово (или пару слов), на которое бот будет отвечать.")
+            return
+        if op == "del" and arg.isdigit():
+            from guard import triggers
+            items = {t["id"]: t for t in (await triggers.all_of(chat_id)).values()}
+            if int(arg) in items:
+                await triggers.delete(chat_id, items[int(arg)]["word"])
+                await cb.answer("Удалил")
+        await show(cb, *await triggers_screen(chat_id))
+
+    elif scr == "mv":
+        if not op:
+            await show(cb, *await move_screen(bot, chat_id, user_id))
+            return
+        dst = int(op)
+        if not await perms.can_configure(bot, dst, user_id):
+            await cb.answer("В том чате у тебя нет права ⚙️ настройки.", show_alert=True)
+            return
+        dst_chat = await db.get_chat(dst)
+        if arg != "yes":
+            await show(cb, screen("🧰 Перенести?", [f"Из: {chat_title(chat)}", f"В: {chat_title(dst_chat)}"],
+                                  note="В новом чате настройки, тексты, триггеры и права заменятся."),
+                       kb([btn("✅ Перенести", f"g:mv:{chat_id}:{dst}:yes", accent=True), btn("Отмена", f"g:mv:{chat_id}")]))
+            return
+        from guard import transfer
+        counts = await transfer.copy_chat(chat_id, dst)
+        await show(cb, screen("✅ Перенесено", [f"В: {chat_title(dst_chat)}", "", transfer.summary(counts)]),
+                   kb(btn("⚙️ Открыть новый чат", f"g:c:{dst}", accent=True), back(f"g:c:{chat_id}")))
+
     elif scr == "te":
         await show(cb, *await texts_home(chat_id))
     elif scr == "tg" and op.isdigit():
@@ -714,7 +784,7 @@ async def on_input(message: Message, state: FSMContext, bot: Bot) -> None:
         from guard.handlers import admin
         await admin.on_emoji_input(message, state)
         return
-    need = perms.R_GRANT if kind == "grant" else perms.R_SETTINGS
+    need = perms.R_GRANT if kind == "grant" else (perms.R_TRIGGERS if (kind or "").startswith("trig") else perms.R_SETTINGS)
     if not chat_id or not await perms.has(bot, chat_id, message.from_user.id, need):
         await state.clear()
         return
@@ -748,6 +818,30 @@ async def on_input(message: Message, state: FSMContext, bot: Bot) -> None:
             note += "\nЧасть строк не похожа на домены, пропустил."
         await message.answer(note)
         nxt = await domains_screen(chat_id)
+    elif kind == "trig_word":
+        from guard import triggers
+        word = triggers.norm(message.text or "")
+        if not word:
+            await message.answer("Нужно слово. Пришлите ещё раз или /cancel")
+            return
+        await state.update_data(kind=f"trig_body:{word}")
+        await message.answer(f"✏️ Теперь пришлите, чем отвечать на \"{out.esc(word)}\": текст (можно с премиум-эмодзи), "
+                             f"фото, видео, гифку, стикер, голосовое или файл.\n{DIV}\n<i>Отменить: /cancel</i>")
+        return
+    elif kind and kind.startswith("trig_body:"):
+        from guard import triggers
+        word = kind.split(":", 1)[1]
+        body = triggers.content_of(message)
+        if body is None:
+            await message.answer("Такое сохранить не могу. Пришлите текст, фото, видео, гифку, стикер, голосовое "
+                                 "или файл, или /cancel")
+            return
+        error = await triggers.save(chat_id, word, *body, message.from_user.id)
+        if error:
+            await message.answer(f"⚠️ {error}")
+        else:
+            await message.answer(f"✅ Триггер \"{out.esc(word)}\" сохранён")
+        nxt = await triggers_screen(chat_id)
     elif kind and kind.startswith("text:"):
         from guard import texts
         _, key, what = kind.split(":")
