@@ -496,7 +496,8 @@ async def triggers_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         lines.append(f"и ещё {len(items) - 80}")
     text = screen("🧩 Триггеры", lines, path=f"⚙️ {chat_title(chat)}",
                   note="Напишут в чате слово целиком, бот ответит сохранённым: текстом с премиум-эмодзи, фото, "
-                       "видео, гифкой, стикером, голосовым или файлом.")
+                       "видео, гифкой, стикером, голосовым или файлом. В чате: ответом «+триггер слово», "
+                       "«-триггер слово», «триггеры».")
     dels = [btn(f"🗑 {t['word'][:24]}", f"g:tz:{chat_id}:del:{t['id']}") for t in items[:30]]
     return text, kb(btn("➕ Добавить", f"g:tz:{chat_id}:add", accent=True), *grid(dels, 2), back(f"g:c:{chat_id}"))
 
