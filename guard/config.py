@@ -52,6 +52,8 @@ GUARD_NEEDS_BAXI_PAID = _flag("GUARD_NEEDS_BAXI_PAID", "0")
 # ID бота Бакси (не секрет, но держим в .env): если он в чате, на голую /settings отвечает он, а не модератор
 BAXI_BOT_ID = _int("BAXI_BOT_ID", 0)
 API_TIMEOUT = 3.0
+# адрес веб-панели (https, мини-приложение Telegram). Пусто: кнопка подсказывает, что панель не подключена
+WEB_PANEL_URL = os.getenv("WEB_PANEL_URL", "").strip()
 # куда приходят обращения в поддержку: ID группы разработчика (бот в ней админ). 0: в личку владельцам бота
 SUPPORT_CHAT_ID = _int("SUPPORT_CHAT_ID", 0)
 

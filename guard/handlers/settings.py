@@ -105,7 +105,7 @@ async def start_markup(bot: Bot, user_id: int) -> InlineKeyboardMarkup:
     if await owners.heir_chats(user_id):
         rows.append(btn("🔑 Права владельца", "ow:me"))
     if perms.is_owner(user_id):
-        rows.append(btn("🛠 Админка", "a:home:0"))
+        rows.append(btn("🛠 Супер-админка", "a:home:0", style="success"))
     return kb(*rows)
 
 
@@ -205,10 +205,10 @@ def warn_summary(chat: dict) -> str:
 async def rights_line(bot: Bot, chat_id: int) -> str:
     miss = await perms.missing_rights(bot, chat_id)
     if miss is None:
-        return "⚠️ бот не администратор в чате"
+        return "⚠️ Бот не администратор в чате"
     if miss:
-        return "⚠️ не хватает прав: " + ", ".join(miss)
-    return "✅ права бота в порядке"
+        return "⚠️ Не хватает прав: " + ", ".join(miss)
+    return "✅ Права бота в порядке"
 
 
 # ---------- экраны ----------
@@ -239,31 +239,146 @@ async def chats_screen(bot: Bot, user_id: int) -> tuple[str, InlineKeyboardMarku
             kb(*grid(buttons, 1), back("g:home:0")))
 
 
+def protect_status(chat: dict) -> str:
+    on = [name for key, name in (("spam_on", "антиспам"), ("stop_on", "стоп-слова")) if chat[key]]
+    if attack_on(chat):
+        on.append("идёт режим атаки")
+    elif chat["attack_auto"]:
+        on.append("атака авто")
+    return "🟢 " + ", ".join(on) if on else "🔴 выключена"
+
+
+def newcomers_status(chat: dict) -> str:
+    if chat["captcha"]:
+        hi = " · приветствие" if chat["welcome_on"] else ""
+        return f"🟢 капча: {welcome_mod.MODES.get(chat['captcha'], chat['captcha'])}{hi}"
+    return "🟡 приветствие, без капчи" if chat["welcome_on"] else "🔴 без капчи"
+
+
+def clean_status(chat: dict) -> str:
+    svc = [name for k, name in SERVICE if chat[k]]
+    return "🟢 удаляю: " + ", ".join(svc) if svc else "▫️ служебные не трогаю"
+
+
+def needs_quick(chat: dict) -> bool:
+    """Рекомендуемое ещё не включено: показываем «⚡ Быстрая настройка»."""
+    return not (chat["spam_on"] and chat["captcha"] and chat["attack_auto"])
+
+
 async def card(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    from guard import chatinfo
     chat = await db.ensure_chat(chat_id)
     ok, mode = await access.status(chat)
     wl, mods = len(await db.whitelist(chat_id)), len(await db.rights_list(chat_id))
-    on, total = clean_count(chat)
-    lines = [
-        row("🛡", "Защита", f"{protect_count(chat)} из 3"),
-        row("🧹", "Чистота", f"{on} из {total}"),
-        row("⚠️", "Наказания", warn_summary(chat)),
-        row("👥", "Роли", f"назначено {mods}", f"белый список {wl}"),
-        row("📜", "Журнал", "подключён" if chat["log_chat_id"] else "только в базе"),
-        row("👋", "Приветствие", "вкл" if chat["welcome_on"] else "выкл",
-            f"капча: {welcome_mod.MODES.get(chat['captcha'], 'выкл')}"),
-    ]
-    footer = [await rights_line(bot, chat_id)]
+    try:
+        members = await bot.get_chat_member_count(chat_id)
+    except Exception:
+        members = 0
+    plan = (await chatinfo.plan(chat)).replace("Тариф: ", "")
+    sub = " · ".join(x for x in (f"👥 {chatinfo.number(members)} {chatinfo.plural(members, 'участник', 'участника', 'участников')}"
+                                 if members else "", f"💳 {plan}") if x)
+    team = f"ролей {mods}" if mods else "ролей нет"
+    lines = [f"<i>{sub}</i>", "➖" * 7,
+             row("🛡", "Защита", protect_status(chat)),
+             row("👋", "Новички", newcomers_status(chat)),
+             row("🧹", "Чистота", clean_status(chat)),
+             row("⚠️", "Наказания", f"{chat['warn_limit']} "
+                 f"{chatinfo.plural(chat['warn_limit'], 'предупреждение', 'предупреждения', 'предупреждений')} "
+                 f"→ {warn_mode_label(chat)}"),
+             row("👥", "Команда", team, f"🤍 {wl}"),
+             row("📜", "Журнал", "в канале" if chat["log_chat_id"] else "в базе бота")]
+    rights = await rights_line(bot, chat_id)
+    footer = [rights]
     if not ok:
         footer.append(f"⏸ {out.esc(mode)}")
-    text = screen(f"⚙️ {chat_title(chat)}", lines, footer=footer)
-    rows = [[btn("🛡 Защита", f"g:pr:{chat_id}", accent=True), btn("🧹 Чистота", f"g:cl:{chat_id}")],
-            [btn("⚠️ Наказания", f"g:wr:{chat_id}"), btn("👥 Роли", f"g:wl:{chat_id}")],
-            [btn("📜 Журнал", f"g:lg:{chat_id}"), btn("✉️ Тексты", f"g:te:{chat_id}")],
-            [btn("👋 Приветствие", f"g:hi:{chat_id}"), btn("🧩 Триггеры", f"g:tz:{chat_id}")],
-            [btn("👑 Владелец", f"ow:c:{chat_id}"), btn("ℹ️ О чате", f"g:in:{chat_id}")],
-            back("g:chats:0", "⬅️ Мои чаты")]
+    if "⚠️" in rights:
+        footer.append("💡 Дайте боту права администратора, без них защита не работает")
+    elif not (chat["spam_on"] or chat["stop_on"]):
+        footer.append("💡 Защита выключена: включите её кнопкой «⚡ Быстрая настройка»")
+    elif not chat["captcha"]:
+        footer.append("💡 Капча не включена: боты-спамеры заходят без проверки")
+    head = f"⚙️ {chat_title(chat)}"
+    text = "\n".join([f"<b>{head}</b>", *lines, "➖" * 7, *footer])
+    protect_on = bool(chat["spam_on"] or chat["stop_on"])
+    rows = []
+    if needs_quick(chat):
+        rows.append(btn("⚡ Быстрая настройка", f"g:qs:{chat_id}", style="success"))
+    rows += [[btn("🛡 Защита", f"g:pr:{chat_id}", style="success" if protect_on else "danger"),
+              btn("👥 Команда", f"g:tm:{chat_id}")],
+             [btn("🎨 Оформление", f"g:ds:{chat_id}"), btn("📜 Журнал", f"g:lg:{chat_id}")],
+             btn("ℹ️ О чате и перенос", f"g:in:{chat_id}"),
+             back("g:chats:0", "⬅️ Мои чаты")]
     return text, kb(*rows)
+
+
+QUICK = [("🛡", "Антиспам: ссылки новичков, реклама, мошенники"),
+         ("👋", "Капча кнопкой, 3 минуты, не прошёл: удалить из чата"),
+         ("🧹", "Удалять «вошёл» и «вышел»"),
+         ("🚨", "Режим атаки включается сам при наплыве")]
+
+
+def quick_screen(chat: dict) -> tuple[str, InlineKeyboardMarkup]:
+    c = chat["chat_id"]
+    lines = ["Включу рекомендуемое:", *[f"✅ {text}" for _icon, text in QUICK]]
+    text = screen("⚡ Быстрая настройка", lines, path=f"⚙️ {chat_title(chat)}",
+                  note="Остальное не трогаю. Любой пункт потом меняется в разделах.")
+    return text, kb([btn("✅ Включить", f"g:qs:{c}:yes", style="success"), btn("Отмена", f"g:c:{c}")])
+
+
+async def quick_apply(bot: Bot, chat_id: int) -> str:
+    """Включить рекомендуемое. Возвращает предупреждение, если что-то не включилось."""
+    fields = dict(spam_on=1, spam_links=1, spam_forwards=1, spam_buttons=1, spam_scam=1, spam_newbie=1,
+                  svc_join=1, svc_leave=1, attack_auto=1)
+    note = ""
+    problem = await perms.rights_problem(bot, chat_id, "can_restrict_members", "can_delete_messages")
+    if problem:
+        note = "Капчу не включил: " + re.sub(r"<[^>]+>", "", problem)
+    else:
+        fields.update(captcha="button", captcha_min=3, captcha_fail="kick")
+    before = welcome_mod.greets(await db.get_chat(chat_id))
+    await db.set_chat(chat_id, **fields)
+    fresh = await db.get_chat(chat_id)
+    if welcome_mod.greets(fresh) != before:
+        await welcome_mod.sync_baxi(fresh)
+    return note
+
+
+async def team_screen(bot: Bot, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    chat = await db.get_chat(chat_id)
+    rights = await db.rights_list(chat_id)
+    by_role: dict[str, int] = {}
+    for r in rights:
+        role = perms.role_from_flags(r["flags"])
+        by_role[role] = by_role.get(role, 0) + 1
+    roles = ", ".join(f"{perms.ROLE_TITLES.get(k, k)} {n}" for k, n in by_role.items()) or "не назначены"
+    owner = chat["owner_override"] or chat["owner_id"]
+    lines = [row("👥", "Роли", roles),
+             row("🤍", "Белый список", str(len(await db.whitelist(chat_id)))),
+             row("👑", "Владелец", (await db.member_name(chat_id, owner) or str(owner)) if owner else "не известен"),
+             row("🛟", "Заместитель", (await db.member_name(chat_id, chat["heir_id"]) or str(chat["heir_id"]))
+                 if chat["heir_id"] else "нет")]
+    text = screen("👥 Команда", lines, path=f"⚙️ {chat_title(chat)}",
+                  note="Роль в чате: ответом на сообщение «роль» или /role.")
+    return text, kb(btn("👥 Роли и белый список", f"g:wl:{chat_id}"), btn("👑 Владелец и заместитель", f"ow:c:{chat_id}"),
+                    back(f"g:c:{chat_id}"))
+
+
+async def design_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    from guard import texts, triggers
+    chat = await db.get_chat(chat_id)
+    own = 0
+    for key in texts.TEXTS:
+        if (await texts.override(chat_id, key) or {}).get("html"):
+            own += 1
+    trig = len(await triggers.all_of(chat_id))
+    lines = [row("👋", "Приветствие", "вкл" if chat["welcome_on"] else "выкл",
+                 f"капча: {welcome_mod.MODES.get(chat['captcha'], 'выкл')}"),
+             row("✉️", "Свои тексты", str(own) if own else "стандартные"),
+             row("🧩", "Триггеры", str(trig) if trig else "нет")]
+    text = screen("🎨 Оформление", lines, path=f"⚙️ {chat_title(chat)}",
+                  note="Любое сообщение бота можно переписать с премиум-эмодзи, картинкой и кнопками.")
+    return text, kb([btn("👋 Приветствие", f"g:hi:{chat_id}"), btn("✉️ Тексты", f"g:te:{chat_id}")],
+                    btn("🧩 Триггеры", f"g:tz:{chat_id}"), back(f"g:c:{chat_id}"))
 
 
 WELCOME_TTLS = [0, 1, 5, 15, 60]
@@ -299,22 +414,32 @@ async def welcome_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
         [btn(f"🛡 Капча: {welcome_mod.MODES.get(chat['captcha'], 'выкл')}", f"g:hi:{c}:cap")],
         [btn(f"⏳ {chat['captcha_min']} мин", f"g:hi:{c}:capmin"), btn(f"🚪 {fail}", f"g:hi:{c}:capfail")],
         btn("✏️ Текст капчи", f"g:ti:{c}:captcha:hi"),
-        back(f"g:c:{c}"))
+        back(f"g:ds:{c}"))
 
 
 async def protect_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     chat = await db.get_chat(chat_id)
     words = len(await db.stopwords(chat_id))
-    attack = "идёт" if attack_on(chat) else word(False)
+    domains = len(await db.domains(chat_id))
+    attack = "🔥 идёт" if attack_on(chat) else ("авто" if chat["attack_auto"] else "выкл")
+    on, total = clean_count(chat)
     lines = [
-        row("🔗", "Антиспам", word(chat["spam_on"]), SPAM_ACTIONS[chat["spam_action"]] if chat["spam_on"] else ""),
-        row("🚫", "Стоп-слова", word(chat["stop_on"]), f"слов {words}"),
-        row("🚨", "Режим атаки", attack, "авто" if chat["attack_auto"] else ""),
+        row("🛡", "Антиспам", "🟢 вкл" if chat["spam_on"] else "🔴 выкл",
+            SPAM_ACTIONS[chat["spam_action"]] if chat["spam_on"] else ""),
+        row("🚫", "Стоп-слова", "🟢 вкл" if chat["stop_on"] else "🔴 выкл", f"слов {words}"),
+        row("🔗", "Разрешённые сайты", str(domains)),
+        row("🚨", "Режим атаки", attack),
+        row("🧹", "Чистота", f"{on} из {total}"),
+        row("⚠️", "Наказания", warn_summary(chat)),
     ]
     text = screen(P_PROTECT, lines, path=f"⚙️ {chat_title(chat)}",
-                  note="Админов, модераторов бота, белый список и доверенных у Бакси автоматика не трогает.")
-    return text, kb([btn("🔗 Антиспам", f"g:sp:{chat_id}"), btn("🚫 Стоп-слова", f"g:sw:{chat_id}")],
-                    btn("🚨 Режим атаки", f"g:at:{chat_id}"), back(f"g:c:{chat_id}"))
+                  note="Админов, роли бота, белый список и доверенных у Бакси автоматика не трогает.")
+    c = chat_id
+    return text, kb([btn("🛡 Антиспам", f"g:sp:{c}", style="success" if chat["spam_on"] else "danger"),
+                     btn("🚫 Стоп-слова", f"g:sw:{c}", style="success" if chat["stop_on"] else "danger")],
+                    [btn("🔗 Сайты", f"g:dm:{c}"), btn("🚨 Атака", f"g:at:{c}")],
+                    [btn("🧹 Чистота", f"g:cl:{c}"), btn("⚠️ Наказания", f"g:wr:{c}")],
+                    back(f"g:c:{c}"))
 
 
 async def spam_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -397,7 +522,7 @@ async def clean_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     return text, kb(*grid(toggles, 2),
                     [btn(check(chat["cmd_delete"], "команды"), f"g:cl:{chat_id}:cmd"),
                      btn(f"💬 {ttl}", f"g:cl:{chat_id}:ttl")],
-                    back(f"g:c:{chat_id}"))
+                    back(f"g:pr:{chat_id}"))
 
 
 async def warns_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -414,7 +539,7 @@ async def warns_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
                      btn("➕", f"g:wr:{chat_id}:lim:1")],
                     btn(f"🎯 {warn_mode_label(chat)}", f"g:wr:{chat_id}:mode", accent=True),
                     btn(f"⏳ сгорают: {ttl}", f"g:wr:{chat_id}:ttl"),
-                    back(f"g:c:{chat_id}"))
+                    back(f"g:pr:{chat_id}"))
 
 
 def person(r: dict) -> str:
@@ -440,7 +565,7 @@ async def trust_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, Inlin
         rows.append(btn("➕ Назначить", f"g:wl:{chat_id}:add", accent=True))
     if await perms.has(bot, chat_id, user_id, perms.R_SETTINGS):
         rows += grid([btn(f"❌ {person(r)[:22]}", f"g:wl:{chat_id}:rw:{r['user_id']}") for r in wl[:20]], 2)
-    return text, kb(*rows, btn("🌐 Разрешённые домены", f"g:dm:{chat_id}"), back(f"g:c:{chat_id}"))
+    return text, kb(*rows, btn("🌐 Разрешённые домены", f"g:dm:{chat_id}"), back(f"g:tm:{chat_id}"))
 
 
 async def role_card(bot: Bot, chat_id: int, target: int, name: str,
@@ -511,7 +636,7 @@ TEXT_SCREENS = ("te", "tg", "ti", "tw", "tv", "tr")
 
 
 def texts_back(chat_id: int) -> str:
-    return "a:home:0" if chat_id == 0 else f"g:c:{chat_id}"
+    return "a:home:0" if chat_id == 0 else f"g:ds:{chat_id}"
 
 
 async def send_template(message: Message, chat_id: int, key: str, what: str) -> None:
@@ -639,7 +764,7 @@ async def triggers_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
                        "видео, гифкой, стикером, голосовым или файлом. В чате: ответом «+триггер слово», "
                        "«-триггер слово», «триггеры».")
     dels = [btn(f"🗑 {t['word'][:24]}", f"g:tz:{chat_id}:del:{t['id']}") for t in items[:30]]
-    return text, kb(btn("➕ Добавить", f"g:tz:{chat_id}:add", accent=True), *grid(dels, 2), back(f"g:c:{chat_id}"))
+    return text, kb(btn("➕ Добавить", f"g:tz:{chat_id}:add", accent=True), *grid(dels, 2), back(f"g:ds:{chat_id}"))
 
 
 # ---------- нажатия ----------
@@ -718,6 +843,18 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
 
     if scr == "c":
         await show(cb, *await card(bot, chat_id, user_id))
+    elif scr == "qs":   # ⚡ быстрая настройка
+        if op != "yes":
+            await show(cb, *quick_screen(chat))
+            return
+        note = await quick_apply(bot, chat_id)
+        text, markup = await card(bot, chat_id, user_id)
+        await show(cb, ("✅ <b>Рекомендуемое включено</b>\n" + (f"⚠️ {out.esc(note)}\n" if note else "") + "\n" + text),
+                   markup)
+    elif scr == "tm":
+        await show(cb, *await team_screen(bot, chat_id))
+    elif scr == "ds":
+        await show(cb, *await design_screen(chat_id))
     elif scr == "pr":
         await show(cb, *await protect_screen(chat_id))
 

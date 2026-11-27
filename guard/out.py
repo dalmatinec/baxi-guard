@@ -113,6 +113,9 @@ async def sanitize_requests(make_request, bot, method):
     rows = getattr(markup, "inline_keyboard", None)
     if rows:
         new_rows = [[_button(b) for b in row] for row in rows]
+        chat_id = getattr(method, "chat_id", None)
+        if isinstance(chat_id, int) and chat_id < 0:
+            new_rows = narrow_rows(new_rows)   # в чате сообщения узкие: длинные кнопки по одной в ряд
         if new_rows != rows:
             updates["reply_markup"] = InlineKeyboardMarkup(inline_keyboard=new_rows)
     if updates:
@@ -128,6 +131,22 @@ async def sanitize_requests(make_request, bot, method):
             raise
         await asyncio.sleep(exc.retry_after + 0.5)
         return await make_request(bot, method)
+
+
+GROUP_ROW_CHARS = 16   # в чате кнопки шириной с сообщение: длиннее этого в ряду подписи обрезаются
+
+
+def narrow_rows(rows: list[list]) -> list[list]:
+    """Ряд из нескольких кнопок с длинными подписями разбить по одной: «🔒 Закрыть список» не обрежется.
+    Короткие (варианты капчи, цифры, «◀️ ▶️») остаются в ряд."""
+    out_rows = []
+    for row in rows:
+        if len(row) > 1 and (sum(len(b.text) for b in row) > GROUP_ROW_CHARS
+                             or max(len(b.text) for b in row) > GROUP_ROW_CHARS // 2 + 2):
+            out_rows += [[b] for b in row]
+        else:
+            out_rows.append(row)
+    return out_rows
 
 
 def _button(b):

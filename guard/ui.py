@@ -12,8 +12,14 @@ DIV = "➖" * 7          # разделитель экранов и длинны
 DIV_SHORT = "➖" * 5    # в коротких сообщениях
 
 
-def btn(text: str, data: str = "", *, url: str = "", accent: bool = False) -> InlineKeyboardButton:
-    style = "primary" if accent else None
+def btn(text: str, data: str = "", *, url: str = "", accent: bool = False, style: str | None = None,
+        web: str = "") -> InlineKeyboardButton:
+    """style: primary (синяя, главное действие), success (зелёная, включено), danger (красная, выключено/проблема).
+    web: адрес мини-приложения (веб-панель внутри Telegram)."""
+    style = style or ("primary" if accent else None)
+    if web:
+        from aiogram.types import WebAppInfo
+        return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=web), style=style)
     if url:
         return InlineKeyboardButton(text=text, url=url, style=style)
     return InlineKeyboardButton(text=text, callback_data=data, style=style)

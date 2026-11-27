@@ -292,7 +292,7 @@ async def owner_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, Inlin
                        "Заместитель запрашивает права в личке бота, владельцу и чату приходит уведомление; "
                        "если за 72 часа никто не отклонит, он становится владельцем в боте (если владельца в чате "
                        "уже нет, через сутки). Нет заместителя: напишите разработчику через «🆘 Поддержка».")
-    return text, kb(*rows, back(f"g:c:{chat_id}"))
+    return text, kb(*rows, back(f"g:tm:{chat_id}"))
 
 
 async def heir_screen(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
