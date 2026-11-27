@@ -39,7 +39,16 @@ PY
 
 if [ ! -f .env ]; then
     cp .env.example .env
-    read -rsp "Токен модератора от @BotFather (ввод скрыт): " TOKEN; echo
+    while true; do
+        read -rsp "Токен модератора от @BotFather (ввод скрыт): " TOKEN; echo
+        TOKEN=$(echo "$TOKEN" | tr -d '[:space:]')
+        BAXI_TOKEN=$(grep '^BOT_TOKEN=' /opt/linkhub/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]"' || true)
+        if [ -n "$BAXI_TOKEN" ] && [ "$TOKEN" = "$BAXI_TOKEN" ]; then
+            echo "Это токен Бакси. Модератору нужен свой, отдельный бот от @BotFather"
+            continue
+        fi
+        break
+    done
     read -rp "Твой Telegram ID (несколько через запятую): " OWNERS
     set_env BOT_TOKEN "$TOKEN"
     set_env OWNER_IDS "$OWNERS"
