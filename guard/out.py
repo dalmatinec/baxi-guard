@@ -23,6 +23,7 @@ _tasks: set[asyncio.Task] = set()
 # Работает, если у владельца бота есть Telegram Premium.
 PACK: dict[str, str] = {}   # обычный эмодзи -> id премиум-версии
 BUTTON_HOOK = None          # цвет и значок кнопок от владельца (buttons.apply), ставится при запуске
+NICK_HOOK = None            # купленный ник (nicks.render), ставится при запуске
 _SPLIT = re.compile(r"(<a\b[^>]*>.*?</a>|<tg-emoji\b[^>]*>.*?</tg-emoji>|<code>.*?</code>|<[^>]+>)", re.S)
 
 
@@ -73,7 +74,21 @@ def head(text: str) -> str:
 
 
 def mention(user_id: int, name: str) -> str:
+    """Имя ссылкой на человека. Купил ник: его ник со шрифтом и премиум-эмодзи."""
+    if NICK_HOOK is not None:
+        nick = NICK_HOOK(user_id, True)
+        if nick:
+            return nick
     return f'<a href="tg://user?id={user_id}">{esc(name or str(user_id))}</a>'
+
+
+def display(user_id: int, name: str) -> str:
+    """Имя без ссылки (топы, где не надо будить людей уведомлением). Купил ник: его ник."""
+    if NICK_HOOK is not None:
+        nick = NICK_HOOK(user_id, False)
+        if nick:
+            return nick
+    return esc(name or str(user_id))
 
 
 def full_name(user) -> str:

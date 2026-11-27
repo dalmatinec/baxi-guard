@@ -101,9 +101,24 @@ TEXTS: dict[str, tuple[str, str, str, dict[str, tuple[str, str]]]] = {
                  {"chat_name": ("название чата", "Круиз"), "period": ("за какой период", "Сегодня с 00:00"),
                   "messages": ("сколько сообщений", "1 239"), "members": ("сколько человек писали", "46"),
                   "top": ("топ-10 строками", "🥇 Олег · 146\n🥈 Аня · 127\n🥉 Ира · 117\n4. Макс · 90")}),
+    "welcome": ("Приветствие", "👋 Приветствие новичка",
+                "👋 Привет, {user}!\nДобро пожаловать в <b>{chat}</b>, ты у нас {count}-й участник.\n"
+                "Осмотрись и чувствуй себя как дома 🙂",
+                {"user": ("имя ссылкой", "<a href='tg://user?id=1'>Олег</a>"), "name": ("имя без ссылки", "Олег"),
+                 "username": ("юзернейм или имя", "@oleg"), "chat": ("название чата", "Круиз"),
+                 "count": ("какой по счёту участник", "47")}),
+    "captcha": ("Приветствие", "🛡 Капча для новичка",
+                "🛡 {user}, подтверди, что ты не бот.\n{task}\n⏳ На это {minutes} мин, потом {fail}.",
+                {"user": ("имя ссылкой", "<a href='tg://user?id=1'>Олег</a>"),
+                 "task": ("задание", "Сколько будет 4 + 3?"), "minutes": ("сколько минут", "3"),
+                 "fail": ("что будет, если не пройти", "удалю из чата")}),
+    "captcha_fail": ("Приветствие", "🚪 Не прошёл капчу",
+                     "🚪 {user} не прошёл проверку: {fail}.",
+                     {"user": ("имя ссылкой", "<a href='tg://user?id=1'>Олег</a>"),
+                      "fail": ("что сделано", "удалён из чата")}),
 }
 GROUP_ICONS = {"Модерация": "🛡", "Роли и доверие": "⭐", "Профиль": "👤", "Задолженность": "💳", "Игры": "🎰",
-               "Активность": "📊"}
+               "Активность": "📊", "Приветствие": "👋"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_texts (
@@ -223,7 +238,36 @@ def markup(msg: Msg, values: dict | None = None, extra: InlineKeyboardMarkup | N
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
-async def send(bot: Bot, chat: dict, key: str, *, reply_to: Message | None = None, thread: int | None = None,
+MEDIA_KINDS = ("video", "animation")
+
+
+def media_of(value: str) -> tuple[str, str]:
+    """Поле photo: просто file_id (картинка) или «video:file_id», «animation:file_id» (гифка)."""
+    kind, _, fid = (value or "").partition(":")
+    return (kind, fid) if kind in MEDIA_KINDS and fid else ("photo", value)
+
+
+def media_value(message: Message) -> str:
+    """Что сохранить в поле photo из присланного сообщения. Пусто: там нет картинки, видео или гифки."""
+    if message.photo:
+        return message.photo[-1].file_id
+    if message.animation:
+        return f"animation:{message.animation.file_id}"
+    if message.video:
+        return f"video:{message.video.file_id}"
+    return ""
+
+
+async def send_media(bot: Bot, chat_id: int, value: str, *, caption: str | None = None,
+                     markup: InlineKeyboardMarkup | None = None, reply_to: int | None = None,
+                     thread: int | None = None) -> Message:
+    kind, fid = media_of(value)
+    method = {"photo": bot.send_photo, "video": bot.send_video, "animation": bot.send_animation}[kind]
+    return await method(chat_id, fid, caption=caption, reply_markup=markup, parse_mode="HTML",
+                        reply_to_message_id=reply_to, message_thread_id=thread if reply_to is None else None)
+
+
+async def send(bot: Bot, chat: dict, key: str, /, *, reply_to: Message | None = None, thread: int | None = None,
                ttl: int | None = None, extra: InlineKeyboardMarkup | None = None, **values) -> Message | None:
     """Сообщение по шаблону чата: картинка (если есть), текст, кнопки. ttl: через сколько удалить
     (по умолчанию как остальные ответы бота в этом чате; 0 не удалять)."""
@@ -236,10 +280,9 @@ async def send(bot: Bot, chat: dict, key: str, *, reply_to: Message | None = Non
     if t.photo:
         fits = len(html) <= MAX_CAPTION
         try:
-            sent = await bot.send_photo(
-                chat["chat_id"], t.photo, caption=html if fits else None, reply_markup=kb if fits else None,
-                parse_mode="HTML", reply_to_message_id=reply_to.message_id if reply_to else None,
-                message_thread_id=thread if reply_to is None else None)
+            sent = await send_media(bot, chat["chat_id"], t.photo, caption=html if fits else None,
+                                    markup=kb if fits else None,
+                                    reply_to=reply_to.message_id if reply_to else None, thread=thread)
             out.delete_later(bot, chat["chat_id"], sent.message_id, ttl)
             if fits:
                 return sent

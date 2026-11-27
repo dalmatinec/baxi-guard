@@ -19,6 +19,8 @@ async def tick(bot: Bot) -> None:
     for chat in await db.all_chats():  # режим атаки сам выключается по времени
         if 0 < chat["attack_until"] <= db.now():
             await protect.attack_off(bot, chat["chat_id"], auto=True)
+    from guard import welcome
+    await welcome.sweep(bot)  # капчи, которые просрочились, пока бот был выключен
     if time.monotonic() - _last_flush >= 60:  # outbox для Бакси раз в минуту
         _last_flush = time.monotonic()
         await baxi.flush_outbox()

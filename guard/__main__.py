@@ -29,6 +29,10 @@ async def main() -> None:
     await gamecore.init()  # игры со списком: рулетка, топы, ФК
     from guard import triggers
     await triggers.init()  # триггеры чатов
+    from guard import nicks
+    await nicks.init()  # купленные ники
+    from guard import welcome
+    await welcome.init()  # капчи новичков
     from guard.handlers.admin import load_pack
     await load_pack()  # премиум-эмодзи владельца
     from guard import buttons
@@ -51,7 +55,8 @@ async def main() -> None:
 
     runner = await api.start()  # внутренний API для Бакси, только 127.0.0.1
     from guard.commands import refresh_all_once
-    tasks = [asyncio.create_task(scheduler.run(bot)), asyncio.create_task(refresh_all_once(bot))]
+    tasks = [asyncio.create_task(scheduler.run(bot)), asyncio.create_task(refresh_all_once(bot)),
+             asyncio.create_task(welcome.sync_all())]   # Бакси знает, где новичков встречаем мы
     try:
         await bot.delete_webhook(drop_pending_updates=False)
         # не больше 50 обновлений обрабатываются одновременно: при наплыве бот не съедает память
@@ -63,6 +68,7 @@ async def main() -> None:
         from guard.gamecore import core as _core
         for t in list(_out._tasks) + list(_core._tasks):   # отложенные удаления и правки списков
             t.cancel()
+        welcome.cancel_all()   # таймеры капч (просроченные досмотрит планировщик после запуска)
         if runner is not None:
             await runner.cleanup()
         await baxi.close()

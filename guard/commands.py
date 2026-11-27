@@ -26,8 +26,10 @@ MOD = [("mute", "Мут: ответом, время, причина"), ("unmute"
        ("stat", "Активность"), ("v", "Пинг")]
 ADMIN = [*MOD[:-3], ("trust", "В белый список (ответом)"), ("untrust", "Из белого списка"),
          ("mod", "Назначить модератора (ответом)"), ("unmod", "Снять роль (ответом)"),
-         ("settings", "Настройки в личке"), ("chat", "Чат и права бота"), ("profile", "Профиль"), ("stat", "Активность"),
-         ("v", "Пинг")]
+         ("welcome", "Приветствие: как выглядит"), ("setwelcome", "Приветствие: ответом на сообщение"),
+         ("welcomeoff", "Выключить приветствие"), ("captcha", "Капча: button, math, emoji, off"),
+         ("settings", "Настройки прямо в чате"), ("chat", "Чат и права бота"), ("profile", "Профиль"),
+         ("stat", "Активность"), ("v", "Пинг")]
 OWNER = [*ADMIN[:-3], ("adm", "Назначить админа (ответом)"), ("profile", "Профиль"), ("stat", "Активность"),
          ("v", "Пинг")]
 BY_ROLE = {perms.MOD: MOD, perms.ADMIN: ADMIN, perms.OWNER: OWNER}
@@ -80,8 +82,8 @@ async def refresh_chat(bot: Bot, chat_id: int) -> None:
 
 async def refresh_all_once(bot: Bot) -> None:
     """Один раз после обновления: разложить меню по всем чатам (в фоне, с паузами)."""
-    if await db.kv_get("menus_v3") == "1":
+    if await db.kv_get("menus_v4") == "1":
         return
     for chat in await db.all_chats():
         await refresh_chat(bot, chat["chat_id"])
-    await db.kv_set("menus_v3", "1")
+    await db.kv_set("menus_v4", "1")

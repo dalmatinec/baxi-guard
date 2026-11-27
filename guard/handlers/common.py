@@ -167,3 +167,18 @@ async def activity_period(cb: CallbackQuery) -> None:
         if "not modified" not in str(exc):
             log.warning("Не обновил активность: %s", exc)
     await cb.answer()
+
+
+# ---------- сброс чужого ника (только владелец бота) ----------
+
+@router.message(GROUP, F.reply_to_message, F.text.regexp(r"^\s*(-ник|/resetnick(@\w+)?)\s*$"))
+async def reset_nick(message: Message, chat_row: dict) -> None:
+    """Ник оскорбительный: владелец бота убирает его ответом. Монеты не возвращаются."""
+    from guard import nicks
+    if not message.from_user or not perms.is_owner(message.from_user.id):
+        return
+    target = message.reply_to_message.from_user
+    if target is None:
+        return
+    removed = await nicks.remove(target.id)
+    await done(message, chat_row, f"ник {out.esc(out.full_name(target))} убран." if removed else "у него нет своего ника.")

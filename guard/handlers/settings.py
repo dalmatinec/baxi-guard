@@ -12,13 +12,15 @@ import re
 from datetime import datetime
 
 from aiogram import Bot, F, Router
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
-from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from guard import access, config, db, out, perms
+from guard import welcome as welcome_mod
 from guard.links import normalize_domain
 from guard.parse import human_duration, human_for
 from guard.ui import DIV, DIV_SHORT, back, btn, chat_title, check, cycle, grid, kb, row, screen
@@ -49,6 +51,30 @@ class Input(StatesGroup):
     waiting = State()  # в data: kind, chat_id
 
 
+# ввод для настроек, открытых прямо в чате (/settings в группе): стоит рано, сразу после автоматики
+group_router = Router(name="settings_group")
+group_router.message.filter(F.chat.type.in_({"group", "supergroup"}), StateFilter(Input.waiting))
+GROUP_TTL = 600   # настройки, открытые в чате, сами исчезают через 10 минут
+
+
+def in_group(message) -> bool:
+    return message is not None and message.chat.type in ("group", "supergroup")
+
+
+def for_group(markup: InlineKeyboardMarkup, chat_id: int) -> InlineKeyboardMarkup:
+    """В чате нет «Моих чатов» и главного меню: вместо них «✖️ Закрыть»."""
+    rows = []
+    for r in markup.inline_keyboard:
+        new = []
+        for b in r:
+            data = b.callback_data or ""
+            if data.startswith(("g:chats", "g:home")):
+                b = btn("✖️ Закрыть", f"g:x:{chat_id}")
+            new.append(b)
+        rows.append(new)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 # ---------- главное меню ----------
 
 def start_text() -> str:
@@ -72,7 +98,8 @@ async def add_url(bot: Bot) -> str:
 
 async def start_markup(bot: Bot, user_id: int) -> InlineKeyboardMarkup:
     rows = [btn("➕ Добавить в чат", url=await add_url(bot), accent=True),
-            [btn("⚙️ Мои чаты", "g:chats:0"), btn("📖 Команды", "g:help:0")]]
+            [btn("⚙️ Мои чаты", "g:chats:0"), btn("📖 Команды", "g:help:0")],
+            btn("✨ Мой ник", "nk:home")]
     if perms.is_owner(user_id):
         rows.append(btn("🛠 Админка", "a:home:0"))
     return kb(*rows)
@@ -93,7 +120,9 @@ HELP = screen("📖 Команды в чате", [
     "<b>Админ</b>",
     "/mod · /unmod: назначить и снять модератора (ответом)",
     "/trust · /untrust: белый список (ответом)",
-    "/settings · /chat",
+    "/settings или настройки: все настройки прямо в чате · /chat",
+    "+приветствие (ответом на сообщение) · -приветствие · приветствие",
+    "капча кнопка · капча пример · капча эмодзи · капча выкл",
     "",
     "<b>Владелец</b>",
     "/adm: назначить админа (ответом)",
@@ -101,6 +130,7 @@ HELP = screen("📖 Команды в чате", [
     "<b>Все</b>",
     "/profile или профиль · /leave: выписаться из списка",
     "/stat или стата: активность чата и топ-10",
+    "✨ свой ник со шрифтом и премиум-эмодзи: в личке бота, кнопка «Мой ник»",
 ], note="Команда и ответ бота сами исчезают через несколько секунд, это меняется в разделе Чистота.")
 
 
@@ -211,6 +241,8 @@ async def card(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboar
         row("⚠️", "Наказания", warn_summary(chat)),
         row("👥", "Роли", f"назначено {mods}", f"белый список {wl}"),
         row("📜", "Журнал", "подключён" if chat["log_chat_id"] else "только в базе"),
+        row("👋", "Приветствие", "вкл" if chat["welcome_on"] else "выкл",
+            f"капча: {welcome_mod.MODES.get(chat['captcha'], 'выкл')}"),
     ]
     footer = [await rights_line(bot, chat_id)]
     if not ok:
@@ -219,9 +251,46 @@ async def card(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboar
     rows = [[btn("🛡 Защита", f"g:pr:{chat_id}", accent=True), btn("🧹 Чистота", f"g:cl:{chat_id}")],
             [btn("⚠️ Наказания", f"g:wr:{chat_id}"), btn("👥 Роли", f"g:wl:{chat_id}")],
             [btn("📜 Журнал", f"g:lg:{chat_id}"), btn("✉️ Тексты", f"g:te:{chat_id}")],
-            [btn("🧩 Триггеры", f"g:tz:{chat_id}"), btn("ℹ️ О чате", f"g:in:{chat_id}")],
+            [btn("👋 Приветствие", f"g:hi:{chat_id}"), btn("🧩 Триггеры", f"g:tz:{chat_id}")],
+            btn("ℹ️ О чате", f"g:in:{chat_id}"),
             back("g:chats:0", "⬅️ Мои чаты")]
     return text, kb(*rows)
+
+
+WELCOME_TTLS = [0, 1, 5, 15, 60]
+CAPTCHA_MODES = ["", "button", "math", "emoji"]
+CAPTCHA_MINUTES = [1, 3, 5, 10]
+CAPTCHA_FAILS = ["kick", "mute", "ban"]
+P_WELCOME = "👋 Приветствие"
+
+
+async def welcome_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    chat = await db.get_chat(chat_id)
+    ttl = f"через {chat['welcome_ttl']} мин" if chat["welcome_ttl"] else "не удаляю"
+    fail = welcome_mod.FAILS.get(chat["captcha_fail"], welcome_mod.FAILS["kick"])[1]
+    lines = [row("👋", "Приветствие", word(chat["welcome_on"])),
+             row("🤖", "Фраза Бакси после", word(chat["welcome_baxi"])),
+             row("⏱", "Удалять", ttl),
+             row("🧹", "Новое убирает прошлое", word(chat["welcome_clean"])),
+             "",
+             row("🛡", "Капча", welcome_mod.MODES.get(chat["captcha"], "выкл")),
+             row("⏳", "Время на ответ", f"{chat['captcha_min']} мин"),
+             row("🚪", "Не прошёл", fail)]
+    text = screen(P_WELCOME, lines, path=f"⚙️ {chat_title(chat)}",
+                  note="Приветствие задаётся и в чате: ответьте «+приветствие» на любое сообщение, оно сохранится "
+                       "копией с премиум-эмодзи, картинкой или видео, а строки «Текст - ссылка» в конце станут "
+                       "кнопками. Пока капча не пройдена, новичок не может писать.")
+    c = chat_id
+    return text, kb(
+        [btn(check(chat["welcome_on"], "Приветствие"), f"g:hi:{c}:on", accent=True),
+         btn("✏️ Текст и медиа", f"g:ti:{c}:welcome")],
+        [btn(check(chat["welcome_baxi"], "Фраза Бакси"), f"g:hi:{c}:baxi"),
+         btn(check(chat["welcome_clean"], "Убирать прошлое"), f"g:hi:{c}:clean")],
+        [btn(f"⏱ {ttl}", f"g:hi:{c}:ttl"), btn("👁 Как в чате", f"g:hi:{c}:test")],
+        [btn(f"🛡 Капча: {welcome_mod.MODES.get(chat['captcha'], 'выкл')}", f"g:hi:{c}:cap")],
+        [btn(f"⏳ {chat['captcha_min']} мин", f"g:hi:{c}:capmin"), btn(f"🚪 {fail}", f"g:hi:{c}:capfail")],
+        btn("✏️ Текст капчи", f"g:ti:{c}:captcha"),
+        back(f"g:c:{c}"))
 
 
 async def protect_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -491,7 +560,8 @@ async def text_item(chat_id: int, key: str) -> tuple[str, InlineKeyboardMarkup]:
     hint = "\n".join(f"<code>{{{k}}}</code> {v[0]}" for k, v in subs.items())
     source = "свой" if own.get("html") else ("общий текст бота" if common.get("html") else "стандартный")
     lines = [row("📝", "Текст", source),
-             row("🖼", "Картинка", "есть" if t.photo else "нет"),
+             row("🖼", "Картинка", {"photo": "картинка", "video": "видео", "animation": "гифка"}[texts.media_of(t.photo)[0]]
+                 if t.photo else "нет"),
              row("🔘", "Кнопки", str(sum(len(r) for r in t.buttons)) if t.buttons else "нет"),
              DIV, "<b>Так выглядит:</b>", texts.sample(key, t.html), DIV, "<b>Подстановки</b>", hint]
     text = screen(title, lines, path="✉️ Тексты")
@@ -518,10 +588,10 @@ async def preview(cb: CallbackQuery, chat_id: int, key: str) -> None:
     markup = texts.markup(t)
     try:
         if t.photo and len(html) <= texts.MAX_CAPTION:
-            await cb.message.answer_photo(t.photo, caption=html, reply_markup=markup)
+            await texts.send_media(cb.bot, cb.message.chat.id, t.photo, caption=html, markup=markup)
         else:
             if t.photo:
-                await cb.message.answer_photo(t.photo)
+                await texts.send_media(cb.bot, cb.message.chat.id, t.photo)
             await cb.message.answer(html, reply_markup=markup)
     except TelegramAPIError as exc:
         await cb.message.answer(f"⚠️ Telegram не принял этот текст: {out.esc(exc.message)}")
@@ -567,6 +637,8 @@ async def move_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, Inline
 # ---------- нажатия ----------
 
 async def show(cb: CallbackQuery, text: str, markup: InlineKeyboardMarkup) -> None:
+    if in_group(cb.message):
+        markup = for_group(markup, cb.message.chat.id)
     try:
         await cb.message.edit_text(text, reply_markup=markup, link_preview_options=out.NO_PREVIEW)
     except TelegramBadRequest as exc:
@@ -612,6 +684,17 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
         await show(cb, *await chats_screen(bot, user_id))
         return
 
+    if scr == "x":   # закрыть настройки, открытые в чате
+        if in_group(cb.message) and await perms.flags(bot, chat_id, user_id) & perms.R_SETTINGS:
+            try:
+                await cb.message.delete()
+            except TelegramBadRequest:
+                pass
+        await cb.answer()
+        return
+    if in_group(cb.message) and cb.message.chat.id != chat_id:
+        await cb.answer()   # в чате настраивается только этот чат
+        return
     if chat_id == 0:   # тексты бота для всех чатов: только владелец бота
         if not perms.is_owner(user_id) or scr not in TEXT_SCREENS:
             await cb.answer()
@@ -667,6 +750,36 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
             await ask(cb, fsm, "dom_del", chat_id, "Пришлите домены, которые убрать.")
             return
         await show(cb, *await domains_screen(chat_id))
+
+    elif scr == "hi":
+        before = welcome_mod.greets(chat)
+        if op == "on":
+            await db.set_chat(chat_id, **flip(chat, "welcome_on"))
+        elif op == "baxi":
+            await db.set_chat(chat_id, **flip(chat, "welcome_baxi"))
+        elif op == "clean":
+            await db.set_chat(chat_id, **flip(chat, "welcome_clean"))
+        elif op == "ttl":
+            await db.set_chat(chat_id, welcome_ttl=cycle(WELCOME_TTLS, chat["welcome_ttl"]))
+        elif op == "cap":
+            mode = cycle(CAPTCHA_MODES, chat["captcha"])
+            if mode and not chat["captcha"]:
+                problem = await perms.rights_problem(bot, chat_id, "can_restrict_members", "can_delete_messages")
+                if problem:
+                    await cb.answer(re.sub(r"<[^>]+>", "", problem)[:190], show_alert=True)
+                    return
+            await db.set_chat(chat_id, captcha=mode)
+        elif op == "capmin":
+            await db.set_chat(chat_id, captcha_min=cycle(CAPTCHA_MINUTES, chat["captcha_min"]))
+        elif op == "capfail":
+            await db.set_chat(chat_id, captcha_fail=cycle(CAPTCHA_FAILS, chat["captcha_fail"]))
+        elif op == "test":
+            await preview(cb, chat_id, "welcome")
+            return
+        fresh = await db.get_chat(chat_id)
+        if welcome_mod.greets(fresh) != before:
+            await welcome_mod.sync_baxi(fresh)
+        await show(cb, *await welcome_screen(chat_id))
 
     elif scr in ("cl", "sv", "rp"):  # sv и rp: старые кнопки, теперь всё в Чистоте
         if op == "t" and arg in {k for k, _ in SERVICE}:
@@ -808,7 +921,7 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
                 prompts = {"text": "Выше текущий текст: скопируйте, поправьте и пришлите одним сообщением. "
                                    "Премиум-эмодзи, жирный, курсив и ссылки сохранятся как есть. Подстановки в "
                                    "фигурных скобках бот заменит сам.",
-                           "photo": "Пришлите картинку. Она встанет над текстом (подпись до 1024 символов, длиннее: "
+                           "photo": "Пришлите картинку, видео или гифку. Встанет над текстом (подпись до 1024 символов, длиннее: "
                                     "картинка и текст отдельно).",
                            "buttons": BUTTONS_HELP + (BUTTONS_OWNER_HELP if perms.is_owner(user_id) else "")}
                 await send_template(cb.message, chat_id, op, arg)
@@ -932,11 +1045,12 @@ async def on_input(message: Message, state: FSMContext, bot: Bot) -> None:
             await texts.set_text(chat_id, key, html=message.html_text[:texts.MAX_HTML], by=message.from_user.id)
             note = "✅ Текст сохранён"
         elif what == "photo":
-            if not message.photo:
-                await message.answer("Нужна картинка. Пришлите ещё раз или /cancel")
+            media = texts.media_value(message)
+            if not media:
+                await message.answer("Нужна картинка, видео или гифка. Пришлите ещё раз или /cancel")
                 return
-            await texts.set_text(chat_id, key, photo=message.photo[-1].file_id, by=message.from_user.id)
-            note = "✅ Картинка сохранена"
+            await texts.set_text(chat_id, key, photo=media, by=message.from_user.id)
+            note = "✅ Сохранено"
         else:
             from guard import richtext
             owner = perms.is_owner(message.from_user.id)
@@ -974,4 +1088,26 @@ async def on_input(message: Message, state: FSMContext, bot: Bot) -> None:
         nxt = await log_screen(chat_id)
     await state.clear()
     if nxt:
-        await message.answer(nxt[0], reply_markup=nxt[1], link_preview_options=out.NO_PREVIEW)
+        if in_group(message):   # настройки, открытые в чате: без «Моих чатов», и сами исчезнут
+            await out.answer(message, nxt[0], ttl=GROUP_TTL, markup=for_group(nxt[1], message.chat.id))
+        else:
+            await message.answer(nxt[0], reply_markup=nxt[1], link_preview_options=out.NO_PREVIEW)
+
+
+# ---------- ввод в чате ----------
+
+@group_router.message(Command("cancel"))
+async def group_cancel(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    out.delete_later(message.bot, message.chat.id, message.message_id, 5)
+    await out.answer(message, out.head("отменено."), ttl=10)
+
+
+@group_router.message()
+async def group_input(message: Message, state: FSMContext, bot: Bot) -> None:
+    """Админ открыл настройки в чате и нажал «✏️ ...»: его следующее сообщение в этом чате и есть ввод."""
+    data = await state.get_data()
+    if data.get("chat_id") != message.chat.id:
+        await state.clear()
+        raise SkipHandler()
+    await on_input(message, state, bot)

@@ -45,7 +45,8 @@ OWNER_IDS = _ids("OWNER_IDS")
 GUARD_API_PORT = _int("GUARD_API_PORT", 8711)
 BAXI_API_URL = os.getenv("BAXI_API_URL", "").strip().rstrip("/")
 BAXI_API_KEY = os.getenv("BAXI_API_KEY", "").strip()
-WEB_API_KEY = os.getenv("WEB_API_KEY", "").strip()   # для веб-админки (будет позже), свой ключ
+WEB_API_KEY = os.getenv("WEB_API_KEY", "").strip()
+NICK_PRICE = int(os.getenv("NICK_PRICE", "5000") or 5000)   # свой ник, монет Бакси (и за смену столько же)   # для веб-админки (будет позже), свой ключ
 # 1: работать только в чатах, где Бакси оплачен или на пробном (или есть своя подписка от владельца)
 GUARD_NEEDS_BAXI_PAID = _flag("GUARD_NEEDS_BAXI_PAID", "0")
 # ID бота Бакси (не секрет, но держим в .env): если он в чате, на голую /settings отвечает он, а не модератор

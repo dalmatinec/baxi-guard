@@ -1,13 +1,14 @@
 """Ручные команды модерации в группе. Цель: ответом на сообщение, @username или ID после команды."""
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import InlineKeyboardButton, Message
 
 from guard import actions, config, db, out, perms, texts
 from guard.actions import ActionError
@@ -487,13 +488,21 @@ async def baxi_here(bot: Bot, chat_id: int) -> bool:
 
 
 @router.message(Command("settings"))
-async def cmd_settings(message: Message, chat_row: dict, command: CommandObject) -> None:
-    """Кнопка в личку, сразу в настройки этого чата. Если в чате Бакси, голую /settings оставляем ему."""
-    if not command.mention and await baxi_here(message.bot, message.chat.id):
+@router.message(F.chat.type.in_({"group", "supergroup"}), F.text.regexp(re.compile(r"^\s*настройки\s*$", re.I)))
+async def cmd_settings(message: Message, chat_row: dict, command: CommandObject | None = None) -> None:
+    """Настройки этого чата прямо в чате: та же карточка, что в личке, кнопки работают только у админов.
+    Если в чате Бакси, голую /settings оставляем ему (тогда /settings@бот или слово «настройки»)."""
+    if message.chat.type not in ("group", "supergroup"):
+        return
+    if command is not None and not command.mention and await baxi_here(message.bot, message.chat.id):
         return
     if perms.is_anon_admin(message) or not await perms.message_has(message, perms.R_SETTINGS):
         return
+    from guard.handlers import settings as st
+    text, markup = await st.card(message.bot, message.chat.id, message.from_user.id)
     me = await message.bot.me()
-    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-        text="⚙️ Открыть настройки", url=f"https://t.me/{me.username}?start=s_{message.chat.id}", style="primary")]])
-    await done(message, chat_row, "настройки модерации в личке с ботом.", markup=markup)
+    markup = st.for_group(markup, message.chat.id)
+    markup.inline_keyboard.append([InlineKeyboardButton(text="📲 Открыть в личке",
+                                                        url=f"https://t.me/{me.username}?start=s_{message.chat.id}")])
+    await out.answer(message, text, ttl=st.GROUP_TTL, markup=markup)
+    drop_command(message, chat_row)

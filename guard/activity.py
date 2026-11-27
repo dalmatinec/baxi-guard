@@ -34,7 +34,7 @@ def top_lines(top: list[dict]) -> str:
     """Имена без ссылок: топ никого не будит уведомлением."""
     lines = []
     for i, r in enumerate(top):
-        name = out.esc((r["name"] or r["username"] or str(r["user_id"]))[:32])
+        name = out.display(r["user_id"], (r["name"] or r["username"] or str(r["user_id"]))[:32])
         lines.append(f"{MEDALS[i]} <b>{name}</b> · {number(r['n'])}" if i < 3 else f"{i + 1}. {name} · {number(r['n'])}")
     return "\n".join(lines) or "пока никто не писал"
 

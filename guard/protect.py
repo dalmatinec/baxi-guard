@@ -297,4 +297,6 @@ async def on_join(bot: Bot, chat: dict, user: User) -> bool:
         n = int(await db.kv_get(f"attack_kicked:{chat_id}", "0") or 0) + 1
         await db.kv_set(f"attack_kicked:{chat_id}", str(n))
         return True
+    from guard import welcome
+    out.spawn(welcome.on_join(bot, chat, user))   # капча и приветствие в фоне, вход не задерживаем
     return False

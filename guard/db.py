@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS chats (
     warn_mute_min  INTEGER NOT NULL DEFAULT 1440,
     warn_ttl_days  INTEGER NOT NULL DEFAULT 30,      -- 0: не сгорают
     log_chat_id    INTEGER NOT NULL DEFAULT 0,
+    welcome_on     INTEGER NOT NULL DEFAULT 0,  -- приветствие новичков
+    welcome_baxi   INTEGER NOT NULL DEFAULT 1,  -- после приветствия фраза Бакси
+    welcome_ttl    INTEGER NOT NULL DEFAULT 0,  -- удалить приветствие через N минут, 0 не удалять
+    welcome_clean  INTEGER NOT NULL DEFAULT 1,  -- новое приветствие убирает прошлое
+    captcha        TEXT    NOT NULL DEFAULT '', -- '' выкл, button, math, emoji
+    captcha_min    INTEGER NOT NULL DEFAULT 3,  -- минут на капчу
+    captcha_fail   TEXT    NOT NULL DEFAULT 'kick', -- не прошёл: kick, mute, ban
     created_at     INTEGER NOT NULL
 );
 
@@ -166,6 +173,7 @@ CHAT_FIELDS = {
     "stop_on", "stop_action",
     "spam_on", "spam_action", "spam_links", "spam_forwards", "spam_buttons", "spam_scam", "spam_newbie", "spam_ai",
     "svc_join", "svc_leave", "svc_pin", "svc_photo", "svc_title",
+    "welcome_on", "welcome_baxi", "welcome_ttl", "welcome_clean", "captcha", "captcha_min", "captcha_fail",
     "attack_until", "attack_auto", "attack_minutes",
     "warn_limit", "warn_action", "warn_mute_min", "warn_ttl_days", "log_chat_id",
 }
@@ -197,11 +205,28 @@ async def connect(path=None) -> None:
     await _db.commit()
 
 
+# столбцы, которых нет в старой базе: добавляются при запуске
+NEW_CHAT_COLUMNS = (
+    ("welcome_on", "INTEGER NOT NULL DEFAULT 0"),
+    ("welcome_baxi", "INTEGER NOT NULL DEFAULT 1"),
+    ("welcome_ttl", "INTEGER NOT NULL DEFAULT 0"),
+    ("welcome_clean", "INTEGER NOT NULL DEFAULT 1"),
+    ("captcha", "TEXT NOT NULL DEFAULT ''"),
+    ("captcha_min", "INTEGER NOT NULL DEFAULT 3"),
+    ("captcha_fail", "TEXT NOT NULL DEFAULT 'kick'"),
+)
+
+
 async def _migrate_before() -> None:
     """Новые столбцы в старой базе (до создания индексов из SCHEMA)."""
     async with _db.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'members'") as cur:
         if await cur.fetchone() is None:
             return
+    async with _db.execute("PRAGMA table_info(chats)") as cur:
+        chat_cols = {r[1] for r in await cur.fetchall()}
+    for col, ddl in NEW_CHAT_COLUMNS:
+        if chat_cols and col not in chat_cols:
+            await _db.execute(f"ALTER TABLE chats ADD COLUMN {col} {ddl}")
     async with _db.execute("PRAGMA table_info(members)") as cur:
         cols = {r[1] for r in await cur.fetchall()}
     if "first_seen" not in cols:

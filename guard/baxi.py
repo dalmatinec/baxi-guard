@@ -118,6 +118,33 @@ async def trusted(chat_id: int) -> set[int]:
     return ids
 
 
+async def wallet(user_id: int) -> int | None:
+    """Монеты человека у Бакси или None, если Бакси не настроен или не отвечает."""
+    data = await _get(f"/v1/wallet/{user_id}")
+    return int(data["coins"]) if data and "coins" in data else None
+
+
+async def spend(user_id: int, amount: int, ref: str, reason: str) -> dict | None:
+    """Списать монеты у Бакси. {"ok": True, "coins"} / {"ok": False, "error": "not_enough", "coins"} /
+    None: Бакси не отвечает (ничего не списано). Тот же ref Бакси второй раз не спишет."""
+    if not configured():
+        return None
+    try:
+        resp = await client().post("/v1/coins/spend", json={"user_id": user_id, "amount": amount, "ref": ref,
+                                                            "reason": reason})
+    except httpx.HTTPError as exc:
+        _fail(exc)
+        return None
+    if resp.status_code != 200:
+        _fail(f"HTTP {resp.status_code}")
+        return None
+    _ok()
+    try:
+        return resp.json()
+    except ValueError:
+        return None
+
+
 def paid(info: dict) -> bool:
     return bool(info.get("known") and info.get("active") and (info.get("paid") or info.get("trial")))
 
