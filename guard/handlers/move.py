@@ -26,6 +26,10 @@ DEFAULT = transfer.ROLES | transfer.HEIR | transfer.WARNS | transfer.BANS | tran
     | transfer.BAXI
 
 
+# откуда пришли в мастер переноса: «Назад» с первого шага возвращает туда (О чате или главное меню)
+_move_from: dict[int, str] = {}
+
+
 class OwnerInput(StatesGroup):
     heir = State()   # в data: chat_id
 
@@ -102,6 +106,7 @@ async def home_screen(bot: Bot, user_id: int) -> tuple[str, InlineKeyboardMarkup
 
 
 async def dst_screen(bot: Bot, user_id: int, src: dict) -> tuple[str, InlineKeyboardMarkup]:
+    back_to = _move_from.get(user_id) or "tr:home"
     from guard.handlers.settings import add_url
     found = await targets(bot, user_id, src["chat_id"])
     lines = [f"Из: {chat_title(src)}", "", "Шаг 2 из 3. <b>Куда</b> переносим?"]
@@ -111,7 +116,7 @@ async def dst_screen(bot: Bot, user_id: int, src: dict) -> tuple[str, InlineKeyb
                for c in found[:40]]
     return (screen(P_MOVE, lines),
             kb(*grid(buttons, 1), [btn("➕ Добавить в новый чат", url=await add_url(bot)),
-                                   btn("🔄 Проверить снова", f"tr:s:{src['chat_id']}")], back("tr:home")))
+                                   btn("🔄 Проверить снова", f"tr:s:{src['chat_id']}")], back(back_to)))
 
 
 async def available(bot: Bot, src: dict, user_id: int) -> dict[int, str]:
@@ -208,6 +213,7 @@ async def on_move(cb: CallbackQuery, bot: Bot) -> None:
     op = parts[1]
     uid = cb.from_user.id
     if op == "home":
+        _move_from.pop(uid, None)
         await show(cb, *await home_screen(bot, uid))
         return
     try:
@@ -220,6 +226,8 @@ async def on_move(cb: CallbackQuery, bot: Bot) -> None:
         await cb.answer("В этом чате у вас нет права ⚙️ настройки.", show_alert=True)
         return
     if op == "s":
+        if len(parts) > 3 and parts[3] == "in":   # пришли из «О чате»
+            _move_from[uid] = f"g:in:{s}"
         await show(cb, *await dst_screen(bot, uid, src))
         return
     try:

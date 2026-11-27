@@ -292,13 +292,13 @@ async def welcome_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
     c = chat_id
     return text, kb(
         [btn(check(chat["welcome_on"], "Приветствие"), f"g:hi:{c}:on", accent=True),
-         btn("✏️ Текст и медиа", f"g:ti:{c}:welcome")],
+         btn("✏️ Текст и медиа", f"g:ti:{c}:welcome:hi")],
         [btn(check(chat["welcome_baxi"], "Фраза Бакси"), f"g:hi:{c}:baxi"),
          btn(check(chat["welcome_clean"], "Убирать прошлое"), f"g:hi:{c}:clean")],
         [btn(f"⏱ {ttl}", f"g:hi:{c}:ttl"), btn("👁 Как в чате", f"g:hi:{c}:test")],
         [btn(f"🛡 Капча: {welcome_mod.MODES.get(chat['captcha'], 'выкл')}", f"g:hi:{c}:cap")],
         [btn(f"⏳ {chat['captcha_min']} мин", f"g:hi:{c}:capmin"), btn(f"🚪 {fail}", f"g:hi:{c}:capfail")],
-        btn("✏️ Текст капчи", f"g:ti:{c}:captcha"),
+        btn("✏️ Текст капчи", f"g:ti:{c}:captcha:hi"),
         back(f"g:c:{c}"))
 
 
@@ -493,7 +493,7 @@ async def info_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, Inline
     else:
         lines += [f"{'❌' if name in miss else '✅'} {name}" for name in perms.RIGHTS.values()]
     text = screen("ℹ️ О чате", lines, path=f"⚙️ {chat_title(chat)}")
-    rows = [btn("🧰 Перенести в другой чат", f"tr:s:{chat_id}")]
+    rows = [btn("🧰 Перенести в другой чат", f"tr:s:{chat_id}:in")]
     if perms.is_owner(user_id):
         rows.append(btn("🔑 Своя подписка", f"a:sub:{chat_id}"))
     return text, kb(*rows, back(f"g:c:{chat_id}"))
@@ -563,7 +563,18 @@ async def texts_group(chat_id: int, n: int) -> tuple[str, InlineKeyboardMarkup]:
     return text, kb(*grid(buttons, 1), back(f"g:te:{chat_id}"))
 
 
-async def text_item(chat_id: int, key: str) -> tuple[str, InlineKeyboardMarkup]:
+# откуда открыли текст: «Назад» возвращает туда же (приветствие → его текст → назад в приветствие)
+_text_from: dict[tuple[int, int, str], str] = {}
+TEXT_ORIGINS = {"hi": "g:hi:{chat}"}
+
+
+def text_back(user_id: int, chat_id: int, key: str) -> str:
+    from guard import texts
+    group = texts.TEXTS[key][0]
+    return _text_from.get((user_id, chat_id, key)) or f"g:tg:{chat_id}:{texts.groups().index(group)}"
+
+
+async def text_item(chat_id: int, key: str, user_id: int = 0) -> tuple[str, InlineKeyboardMarkup]:
     from guard import texts
     group, title, _default, subs = texts.TEXTS[key]
     own = await texts.override(chat_id, key) or {}
@@ -590,7 +601,7 @@ async def text_item(chat_id: int, key: str) -> tuple[str, InlineKeyboardMarkup]:
         rows.append(extra)
     if own:
         rows.append(btn("↩️ Вернуть стандартный", f"g:tr:{chat_id}:{key}"))
-    return text, kb(*rows, back(f"g:tg:{chat_id}:{texts.groups().index(group)}"))
+    return text, kb(*rows, back(text_back(user_id, chat_id, key)))
 
 
 async def preview(cb: CallbackQuery, chat_id: int, key: str) -> None:
@@ -877,6 +888,13 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
         if op not in texts.TEXTS:
             await cb.answer()
             return
+        if scr == "ti":   # запомнить, откуда пришли
+            if arg in TEXT_ORIGINS:
+                _text_from[(user_id, chat_id, op)] = TEXT_ORIGINS[arg].format(chat=chat_id)
+            else:
+                _text_from.pop((user_id, chat_id, op), None)
+            if len(_text_from) > 5000:
+                _text_from.clear()
         if scr == "tv":
             await cb.answer()
             await preview(cb, chat_id, op)
@@ -898,7 +916,7 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
                 await send_template(cb.message, chat_id, op, arg)
                 await ask(cb, fsm, f"text:{op}:{arg}", chat_id, prompts[arg])
                 return
-        await show(cb, *await text_item(chat_id, op))
+        await show(cb, *await text_item(chat_id, op, user_id))
     else:
         await cb.answer()
 
@@ -1037,7 +1055,7 @@ async def on_input(message: Message, state: FSMContext, bot: Bot) -> None:
             if bad:
                 note += f"\nНе понял: {out.esc(', '.join(bad)[:200])}"
         await message.answer(note)
-        nxt = await text_item(chat_id, key)
+        nxt = await text_item(chat_id, key, message.from_user.id)
     elif kind == "grant":
         raw = (message.text or "").strip()
         row = await db.find_by_username(chat_id, raw) if raw.startswith("@") else \
