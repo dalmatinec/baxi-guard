@@ -96,8 +96,11 @@ async def my_status(event: ChatMemberUpdated, bot: Bot) -> None:
     old, new = event.old_chat_member.status, event.new_chat_member.status
     was_in = old in ("member", "administrator", "restricted", "creator")
     now_in = new in ("member", "administrator", "restricted")
+    from guard import owners
     if now_in:
         await db.ensure_chat(chat.id, chat.title or "", chat.username or "")
+        await owners.mark_back(chat.id)
+        out.spawn(owners.refresh(bot, chat.id))   # запомнить создателя
         from guard import commands
         out.spawn(commands.refresh_chat(bot, chat.id))  # меню команд создателю и ролям
     if now_in and not was_in:
@@ -118,6 +121,7 @@ async def my_status(event: ChatMemberUpdated, bot: Bot) -> None:
             await out.say(bot, chat.id, out.head("права получены, но не хватает: " + ", ".join(miss) + "."))
     elif not now_in and was_in:
         log.info("Убрали из чата %s %s", chat.id, chat.title)
+        await owners.mark_gone(chat.id)   # настройки остаются: их можно перенести в новый чат
 
 
 # ---------- активность чата ----------

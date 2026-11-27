@@ -97,9 +97,13 @@ async def add_url(bot: Bot) -> str:
 
 
 async def start_markup(bot: Bot, user_id: int) -> InlineKeyboardMarkup:
+    from guard import owners
     rows = [btn("➕ Добавить в чат", url=await add_url(bot), accent=True),
             [btn("⚙️ Мои чаты", "g:chats:0"), btn("📖 Команды", "g:help:0")],
-            btn("👤 Профиль", "pf:home")]
+            [btn("👤 Профиль", "pf:home"), btn("🧰 Перенос чата", "tr:home")],
+            btn("🆘 Связь с разработчиком", "sp:home")]
+    if await owners.heir_chats(user_id):
+        rows.append(btn("🔑 Права владельца", "ow:me"))
     if perms.is_owner(user_id):
         rows.append(btn("🛠 Админка", "a:home:0"))
     return kb(*rows)
@@ -257,7 +261,7 @@ async def card(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboar
             [btn("⚠️ Наказания", f"g:wr:{chat_id}"), btn("👥 Роли", f"g:wl:{chat_id}")],
             [btn("📜 Журнал", f"g:lg:{chat_id}"), btn("✉️ Тексты", f"g:te:{chat_id}")],
             [btn("👋 Приветствие", f"g:hi:{chat_id}"), btn("🧩 Триггеры", f"g:tz:{chat_id}")],
-            btn("ℹ️ О чате", f"g:in:{chat_id}"),
+            [btn("👑 Владелец", f"ow:c:{chat_id}"), btn("ℹ️ О чате", f"g:in:{chat_id}")],
             back("g:chats:0", "⬅️ Мои чаты")]
     return text, kb(*rows)
 
@@ -489,7 +493,7 @@ async def info_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, Inline
     else:
         lines += [f"{'❌' if name in miss else '✅'} {name}" for name in perms.RIGHTS.values()]
     text = screen("ℹ️ О чате", lines, path=f"⚙️ {chat_title(chat)}")
-    rows = [btn("🧰 Перенести в другой чат", f"g:mv:{chat_id}")]
+    rows = [btn("🧰 Перенести в другой чат", f"tr:s:{chat_id}")]
     if perms.is_owner(user_id):
         rows.append(btn("🔑 Своя подписка", f"a:sub:{chat_id}"))
     return text, kb(*rows, back(f"g:c:{chat_id}"))
@@ -625,21 +629,6 @@ async def triggers_screen(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
                        "«-триггер слово», «триггеры».")
     dels = [btn(f"🗑 {t['word'][:24]}", f"g:tz:{chat_id}:del:{t['id']}") for t in items[:30]]
     return text, kb(btn("➕ Добавить", f"g:tz:{chat_id}:add", accent=True), *grid(dels, 2), back(f"g:c:{chat_id}"))
-
-
-# ---------- 🧰 перенос ----------
-
-async def move_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
-    chat = await db.get_chat(chat_id)
-    targets = [c for c in await my_chats(bot, user_id) if c["chat_id"] != chat_id]
-    lines = ["Куда перенести всё, что бот знает об этом чате: настройки, стоп-слова, домены, белый список, права, "
-             "тексты, триггеры, топы, предупреждения."]
-    if not targets:
-        lines += ["", "Других чатов нет. Добавьте бота в новый чат админом, и он появится здесь."]
-    text = screen("🧰 Перенос", lines, path=f"⚙️ {chat_title(chat)}",
-                  note="В новом чате это заменит то же самое. Старый чат останется как был.")
-    buttons = [btn(f"➡️ {(c['title'] or str(c['chat_id']))[:30]}", f"g:mv:{chat_id}:{c['chat_id']}") for c in targets[:30]]
-    return text, kb(*grid(buttons, 1), back(f"g:in:{chat_id}"))
 
 
 # ---------- нажатия ----------
@@ -875,25 +864,10 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
                 await cb.answer("Удалил")
         await show(cb, *await triggers_screen(chat_id))
 
-    elif scr == "mv":
-        if not op:
-            await show(cb, *await move_screen(bot, chat_id, user_id))
-            return
-        dst = int(op)
-        if not await perms.can_configure(bot, dst, user_id):
-            await cb.answer("В том чате у тебя нет права ⚙️ настройки.", show_alert=True)
-            return
-        dst_chat = await db.get_chat(dst)
-        if arg != "yes":
-            await show(cb, screen("🧰 Перенести?", [f"Из: {chat_title(chat)}", f"В: {chat_title(dst_chat)}"],
-                                  note="В новом чате настройки, тексты, триггеры и права заменятся."),
-                       kb([btn("✅ Перенести", f"g:mv:{chat_id}:{dst}:yes", accent=True), btn("Отмена", f"g:mv:{chat_id}")]))
-            return
-        from guard import transfer
-        counts = await transfer.copy_chat(chat_id, dst)
-        await show(cb, screen("✅ Перенесено", [f"В: {chat_title(dst_chat)}", "", transfer.summary(counts)]),
-                   kb(btn("⚙️ Открыть новый чат", f"g:c:{dst}", accent=True), back(f"g:c:{chat_id}")))
-
+    elif scr == "mv":   # старые кнопки: теперь мастер переноса
+        target = f"tr:d:{chat_id}:{op}" if op.lstrip("-").isdigit() else f"tr:s:{chat_id}"
+        await show(cb, screen("🧰 Перенос", ["Перенос теперь по шагам: откуда, куда и что переносить."]),
+                   kb(btn("➡️ Продолжить", target, accent=True), back(f"g:c:{chat_id}")))
     elif scr == "te":
         await show(cb, *await texts_home(chat_id))
     elif scr == "tg" and op.isdigit():

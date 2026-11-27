@@ -119,7 +119,7 @@ async def on_sticker(message: Message, state: FSMContext) -> None:
     await message.answer(text, reply_markup=markup)
 
 
-@router.message(StateFilter(NickInput.sticker), ~F.sticker)
+@router.message(StateFilter(NickInput.sticker), ~F.sticker, ~F.text.startswith("/"))
 async def on_not_sticker(message: Message) -> None:
     await message.answer("Нужен стикер. Пришли стикер или /cancel")
 

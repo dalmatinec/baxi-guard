@@ -118,6 +118,9 @@ async def sanitize_requests(make_request, bot, method):
     if updates:
         method = method.model_copy(update=updates)
     from aiogram.exceptions import TelegramRetryAfter
+
+    from guard import limits
+    await limits.pace(method)   # очередь под лимиты Telegram: 20 в минуту в группу, 1 в секунду в личку
     try:
         return await make_request(bot, method)
     except TelegramRetryAfter as exc:

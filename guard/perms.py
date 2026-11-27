@@ -98,12 +98,27 @@ def is_staff_member(m: ChatMember | None) -> bool:
     return m is not None and m.status in ("administrator", "creator")
 
 
+# владелец в боте вместо создателя: chat_id -> user_id (заместитель забрал права или назначил разработчик).
+# Заполняет owners.init() при запуске, меняет owners.set_override()
+OVERRIDES: dict[int, int] = {}
+
+
 async def is_creator(bot: Bot, chat_id: int, user_id: int) -> bool:
-    """Создатель чата или владелец бота: у них все права."""
-    if is_owner(user_id):
+    """Создатель чата, владелец в боте (вместо пропавшего создателя) или владелец бота: у них все права."""
+    if is_owner(user_id) or (user_id and OVERRIDES.get(chat_id) == user_id):
         return True
     m = await member(bot, chat_id, user_id)
     return m is not None and m.status == "creator"
+
+
+def offline_flags(chat: dict, user_id: int, stored: int) -> int:
+    """Права, когда чат недоступен (бота убрали, чат удалён): по тому, что бот запомнил.
+    Создатель, каким его видели последним, и владелец в боте: всё. Остальные: права из базы."""
+    if not user_id:
+        return 0
+    if is_owner(user_id) or user_id in (chat.get("owner_id"), chat.get("owner_override")):
+        return R_ADMIN | ALL_FLAGS
+    return (R_ADMIN | ALL_FLAGS) if stored & R_ADMIN else stored
 
 
 async def flags(bot: Bot, chat_id: int, user_id: int) -> int:

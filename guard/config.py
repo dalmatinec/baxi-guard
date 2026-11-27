@@ -52,6 +52,8 @@ GUARD_NEEDS_BAXI_PAID = _flag("GUARD_NEEDS_BAXI_PAID", "0")
 # ID бота Бакси (не секрет, но держим в .env): если он в чате, на голую /settings отвечает он, а не модератор
 BAXI_BOT_ID = _int("BAXI_BOT_ID", 0)
 API_TIMEOUT = 3.0
+# куда приходят обращения в поддержку: ID группы разработчика (бот в ней админ). 0: в личку владельцам бота
+SUPPORT_CHAT_ID = _int("SUPPORT_CHAT_ID", 0)
 
 # Нейросеть для спорных случаев антиспама. Пусто в AI_API_KEY: нейросети нет
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.deepseek.com").rstrip("/")

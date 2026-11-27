@@ -47,6 +47,13 @@ CREATE TABLE IF NOT EXISTS chats (
     captcha        TEXT    NOT NULL DEFAULT '', -- '' выкл, button, math, emoji
     captcha_min    INTEGER NOT NULL DEFAULT 3,  -- минут на капчу
     captcha_fail   TEXT    NOT NULL DEFAULT 'kick', -- не прошёл: kick, mute, ban
+    owner_id       INTEGER NOT NULL DEFAULT 0,  -- создатель чата в Telegram, каким его видели последний раз
+    owner_seen     INTEGER NOT NULL DEFAULT 0,  -- когда последний раз видели создателя среди админов
+    owner_lost     INTEGER NOT NULL DEFAULT 0,  -- с какого времени создателя нет (удалён или заблокирован), 0 есть
+    heir_id        INTEGER NOT NULL DEFAULT 0,  -- заместитель: может забрать права владельца в боте
+    owner_override INTEGER NOT NULL DEFAULT 0,  -- владелец в боте вместо создателя (заместитель или разработчик)
+    gone_at        INTEGER NOT NULL DEFAULT 0,  -- с какого времени бот не в чате (убрали, чат удалён), 0 в чате
+    moved_to       INTEGER NOT NULL DEFAULT 0,  -- куда перенесли чат
     created_at     INTEGER NOT NULL
 );
 
@@ -176,6 +183,7 @@ CHAT_FIELDS = {
     "welcome_on", "welcome_baxi", "welcome_ttl", "welcome_clean", "captcha", "captcha_min", "captcha_fail",
     "attack_until", "attack_auto", "attack_minutes",
     "warn_limit", "warn_action", "warn_mute_min", "warn_ttl_days", "log_chat_id",
+    "owner_id", "owner_seen", "owner_lost", "heir_id", "owner_override", "gone_at", "moved_to",
 }
 ACTION_KINDS = ("mute", "unmute", "warn", "unwarn", "ban", "unban", "kick", "delete", "spam")
 ACTIONS_KEEP_DAYS = 90
@@ -214,6 +222,13 @@ NEW_CHAT_COLUMNS = (
     ("captcha", "TEXT NOT NULL DEFAULT ''"),
     ("captcha_min", "INTEGER NOT NULL DEFAULT 3"),
     ("captcha_fail", "TEXT NOT NULL DEFAULT 'kick'"),
+    ("owner_id", "INTEGER NOT NULL DEFAULT 0"),
+    ("owner_seen", "INTEGER NOT NULL DEFAULT 0"),
+    ("owner_lost", "INTEGER NOT NULL DEFAULT 0"),
+    ("heir_id", "INTEGER NOT NULL DEFAULT 0"),
+    ("owner_override", "INTEGER NOT NULL DEFAULT 0"),
+    ("gone_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("moved_to", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 

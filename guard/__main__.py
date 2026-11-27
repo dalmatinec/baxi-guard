@@ -33,6 +33,9 @@ async def main() -> None:
     await nicks.init()  # купленные ники
     from guard import welcome
     await welcome.init()  # капчи новичков
+    from guard import owners, support
+    await owners.init()   # владельцы в боте вместо пропавших создателей, запросы заместителей
+    await support.init()  # обращения к разработчику
     from guard.handlers.admin import load_pack
     await load_pack()  # премиум-эмодзи владельца
     from guard import buttons
@@ -45,6 +48,10 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.outer_middleware(ChatTracker(count_messages=True))
     dp.edited_message.outer_middleware(ChatTracker(count_messages=False))
+    from guard.limits import Flood
+    flood = Flood()   # человек не может долбить команды и кнопки
+    dp.message.outer_middleware(flood)
+    dp.callback_query.outer_middleware(flood)
     dp.callback_query.outer_middleware(buttons.PickMiddleware())  # 🎯 выбор кнопки нажатием (владелец)
     dp.include_router(handlers.setup())
 

@@ -150,6 +150,30 @@ async def spend(user_id: int, amount: int, ref: str, reason: str) -> dict | None
         return None
 
 
+async def move_chat(src: int, dst: int, by_id: int) -> dict:
+    """Попросить Бакси перенести своё (аренду, репутацию, память о людях) из src в dst.
+    {"ok": True, "counts"} / {"ok": False, "error": "no_dst" | "no_src" | "down" | ...}."""
+    if not configured():
+        return {"ok": False, "error": "off"}
+    try:
+        resp = await client().post("/v1/chat/move", json={"src": src, "dst": dst, "by_id": by_id}, timeout=15)
+    except httpx.HTTPError as exc:
+        _fail(exc)
+        return {"ok": False, "error": "down"}
+    try:
+        data = resp.json()
+    except ValueError:
+        data = {}
+    if resp.status_code != 200:
+        if resp.status_code >= 500:
+            _fail(f"HTTP {resp.status_code}")
+        return {"ok": False, "error": data.get("error") or f"http_{resp.status_code}"}
+    _ok()
+    _info.pop(src, None)
+    _info.pop(dst, None)
+    return data if isinstance(data, dict) else {"ok": True}
+
+
 def paid(info: dict) -> bool:
     return bool(info.get("known") and info.get("active") and (info.get("paid") or info.get("trial")))
 
