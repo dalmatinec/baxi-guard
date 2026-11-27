@@ -56,7 +56,9 @@ LIVE = ("setup", "open", "closed")
 MAX_TEXT = 3900
 REFRESH_GAP = 2.0          # живой список правим не чаще раза в 2 секунды
 FK_REFRESH_GAP = 15.0      # из-за ФК не чаще раза в 15 секунд
-_fk_games: dict[int, tuple[int, int]] = {}   # chat_id -> (game_id, fk), только игры с ФК
+# chat_id -> (game_id, fk): все идущие игры. Сообщения считаем с начала игры, даже пока ФК не задан:
+# ФК ставят по желанию позже (кнопка 🎯 ФК или /fk), и он должен учесть всё, что написали с запуска
+_fk_games: dict[int, tuple[int, int]] = {}
 _last_edit: dict[int, float] = {}
 _pending: set[int] = set()
 _HASHTAG = re.compile(r"(?<![\w#])#([\wёЁ]{2,64})", re.U)
@@ -69,7 +71,7 @@ async def init() -> None:
     await db.conn().commit()
     await tops.init()
     _fk_games.clear()
-    async with db.conn().execute("SELECT id, chat_id, fk FROM games WHERE status IN ('open', 'closed') AND fk > 0") as cur:
+    async with db.conn().execute("SELECT id, chat_id, fk FROM games WHERE status IN ('setup', 'open', 'closed')") as cur:
         for r in await cur.fetchall():
             _fk_games[r["chat_id"]] = (r["id"], r["fk"])
 
@@ -107,8 +109,7 @@ async def create(chat_id: int, kind: str, mode: str, fk: int, by_id: int, thread
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (chat_id, kind, mode, max(0, fk), status, thread_id or 0, by_id, time.time()))
     await db.conn().commit()
     game = await get(cur.lastrowid)
-    if game["fk"] > 0:
-        _fk_games[chat_id] = (game["id"], game["fk"])
+    _fk_games[chat_id] = (game["id"], game["fk"])
     return game
 
 
@@ -125,10 +126,7 @@ async def set_fk(game: dict, fk: int) -> None:
     """ФК по желанию, в любой момент игры (кнопка 🎯 ФК или /fk 30). 0 убирает."""
     fk = max(0, min(10000, fk))
     await update(game["id"], fk=fk)
-    if fk:
-        _fk_games[game["chat_id"]] = (game["id"], fk)
-    else:
-        _fk_games.pop(game["chat_id"], None)
+    _fk_games[game["chat_id"]] = (game["id"], fk)   # счёт идёт и без ФК, с начала игры
 
 
 async def finish(chat_id: int) -> dict | None:
@@ -213,7 +211,7 @@ def counts_for_fk(text: str | None, is_command: bool = False) -> bool:
 
 
 async def on_message(chat_id: int, user_id: int, text: str | None, is_command: bool = False) -> None:
-    """Из трекера сообщений: засчитать в ФК активной игры. Без игры с ФК ничего не делает."""
+    """Из трекера сообщений: засчитать в ФК идущей игры (с начала игры, задан ФК или ещё нет)."""
     hit = _fk_games.get(chat_id)
     if not hit or not counts_for_fk(text, is_command):
         return

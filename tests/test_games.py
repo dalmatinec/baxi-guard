@@ -82,6 +82,21 @@ def test_join_limits_and_tops(tmp_path, monkeypatch):
     run(tmp_path, monkeypatch, fn)
 
 
+def test_fk_counts_from_game_start(tmp_path, monkeypatch):
+    """ФК задали позже: сообщения с начала игры всё равно учитываются."""
+    async def fn():
+        game = await core.create(CHAT, "roulette", "button", 0, 111)
+        for text in ("привет всем", "как дела", "отлично"):
+            await core.on_message(CHAT, 1, text)
+        await core.set_fk(game, 2)
+        await core.on_message(CHAT, 1, "ещё одно")
+        assert await core.fk_counts(game["id"]) == {1: 4}
+        await core.finish(CHAT)
+        await core.on_message(CHAT, 1, "после игры")
+        assert await core.fk_counts(game["id"]) == {1: 4}
+    run(tmp_path, monkeypatch, fn)
+
+
 def test_fk_and_render(tmp_path, monkeypatch):
     async def fn():
         game = await core.create(CHAT, "roulette", "hashtag", 3, 111)
