@@ -1,0 +1,25 @@
+# docker compose up -d --build   (токены в .env рядом, база в ./data)
+services:
+  guard:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+    network_mode: host          # внутренний API слушает 127.0.0.1 хоста, рядом с Бакси
+    mem_limit: 150m             # потолок памяти, как у сервиса systemd
+    memswap_limit: 150m
+    cpus: 0.5                   # не больше половины ядра
+    pids_limit: 64
+    read_only: true             # писать можно только в ./data и /tmp
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    logging:                    # логи не съедают диск: 3 файла по 10 МБ
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
