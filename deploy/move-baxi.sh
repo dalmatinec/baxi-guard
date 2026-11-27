@@ -30,16 +30,16 @@ die() { echo "❌ $*"; exit 1; }
 step "Подключение к старому серверу $OLD (пароль root спросят один раз)"
 on_old true || die "не подключился по SSH к root@$OLD"
 on_old "test -f $DIR/.env && test -f $DIR/data/bot.db" || die "на старом сервере нет $DIR с базой"
-OLD_UNITS=$(on_old "systemctl list-unit-files 'linkhub@*' --state=enabled --no-legend 2>/dev/null | awk '{print \$1}'" || true)
+OLD_UNITS=$(on_old "systemctl list-unit-files 'linkhub@*' --state=enabled --no-legend 2>/dev/null | awk '{print \$1}'" | tr '\n' ' ' || true)
 # после переезда на старом они выключены: список запомнен при переезде
-[ -z "$OLD_UNITS" ] && [ -f "$DIR/.moved-units" ] && OLD_UNITS=$(cat "$DIR/.moved-units")
+[ -z "${OLD_UNITS// /}" ] && [ -f "$DIR/.moved-units" ] && OLD_UNITS=$(tr '\n' ' ' < "$DIR/.moved-units")
 echo "Старый: $(on_old "du -sh $DIR --exclude=.venv 2>/dev/null | cut -f1") в $DIR, бот: $(on_old 'systemctl is-active linkhub' || true)"
-[ -n "$OLD_UNITS" ] && echo "Копии клиентов: $(echo $OLD_UNITS | tr '\n' ' ')"
+[ -n "${OLD_UNITS// /}" ] && echo "Копии клиентов: $OLD_UNITS"
 SITE_DOMAIN=$(on_old "grep -m1 -oE '^[a-z0-9.-]+\.[a-z]{2,}' /etc/caddy/Caddyfile 2>/dev/null" || true)
 [ -n "$SITE_DOMAIN" ] && echo "Сайт: $SITE_DOMAIN"
 
-sync_from_old() {  # копия /opt/linkhub без библиотек и кеша
-    rsync -aH --delete -e "$RSYNC_SSH" --exclude .venv --exclude __pycache__ --exclude 'data/heartbeat' \
+sync_from_old() {  # копия /opt/linkhub без библиотек и кеша; доп. ключи rsync аргументами
+    rsync -aH --delete "$@" -e "$RSYNC_SSH" --exclude .venv --exclude __pycache__ --exclude 'data/heartbeat' \
         "root@$OLD:$DIR/" "$DIR/"
 }
 
@@ -114,7 +114,7 @@ stop_old
 echo "Старый бот остановлен $(date +%H:%M:%S)"
 
 step "3/5 Докопировать изменения и проверить базу"
-sync_from_old
+sync_from_old --checksum   # сверка по содержимому: база могла поменяться без смены размера
 if ! check_db; then
     echo "База повреждена при копировании, запускаю старый обратно"
     start_old >/dev/null
