@@ -2,6 +2,7 @@
 # Обновить модератора до свежей версии из GitHub:
 #   bash /opt/baxi-guard/deploy/update.sh
 set -euo pipefail
+trap 'echo "❌ Остановился на строке $LINENO: $BASH_COMMAND"' ERR
 cd /opt/baxi-guard
 git pull --ff-only
 .venv/bin/pip install -q -r requirements.txt

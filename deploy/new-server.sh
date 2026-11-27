@@ -11,6 +11,7 @@
 # Повторный запуск безопасен: что уже стоит, не переустанавливается, .env не перезаписываются.
 # Ветка Бакси: BAXI_BRANCH=... (по умолчанию guard-api, в ней связь с модератором)
 set -euo pipefail
+trap 'echo "❌ Остановился на строке $LINENO: $BASH_COMMAND"' ERR
 [ "$(id -u)" = 0 ] || { echo "Запускать от root"; exit 1; }
 BAXI_BRANCH=${BAXI_BRANCH:-guard-api}
 HERE=$(cd "$(dirname "$0")" && pwd)

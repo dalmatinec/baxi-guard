@@ -13,6 +13,8 @@
 # Боты, их папки и сервисы скрипт не трогает.
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "Запускать от root"; exit 1; }
+# любая ошибка: показать, где остановились, а не молча выйти
+trap 'echo "❌ Остановился на строке $LINENO: $BASH_COMMAND"' ERR
 KEYS_ONLY=0
 [ "${1:-}" = "--ssh-keys" ] && KEYS_ONLY=1
 ok() { echo "✅ $*"; }
@@ -20,33 +22,43 @@ ok() { echo "✅ $*"; }
 export DEBIAN_FRONTEND=noninteractive
 echo "== Пакеты"
 apt-get update -qq
-apt-get install -y -qq ufw fail2ban unattended-upgrades python3-venv python3-pip git rsync sqlite3 curl \
-    ca-certificates >/dev/null
+apt-get install -y -qq ufw fail2ban python3-systemd unattended-upgrades python3-venv python3-pip git rsync sqlite3 \
+    curl ca-certificates >/dev/null
 ok "пакеты"
 
 # ---------- 1. файрвол ----------
-SSH_PORT=$(sshd -T 2>/dev/null | awk '/^port / {print $2; exit}')
+# порт SSH: тот, через который ты сейчас подключён (надёжнее всего), иначе из настроек sshd, иначе 22.
+# В Ubuntu 24.04 sshd запускается по запросу, и «sshd -T» без него падает: поэтому не обязателен
+SSH_PORT=$(echo "${SSH_CONNECTION:-}" | awk '{print $4}')
+[ -n "$SSH_PORT" ] || SSH_PORT=$( { sshd -T 2>/dev/null || true; } | awk '/^port / {print $2; exit}')
 SSH_PORT=${SSH_PORT:-22}
 ufw --force default deny incoming >/dev/null
 ufw --force default allow outgoing >/dev/null
 ufw limit "$SSH_PORT/tcp" comment "ssh" >/dev/null   # не больше 6 подключений за 30 секунд с одного IP
 ufw allow 80/tcp comment "site" >/dev/null
 ufw allow 443/tcp comment "site" >/dev/null
-ufw --force enable >/dev/null
-ok "файрвол: открыты SSH ($SSH_PORT), 80, 443"
+if ufw --force enable >/dev/null 2>&1; then
+    ok "файрвол: открыты SSH ($SSH_PORT), 80, 443"
+else
+    echo "⚠️ файрвол не включился (ядро сервера без iptables?), иду дальше без него"
+fi
 
 # ---------- 2. fail2ban ----------
 cat > /etc/fail2ban/jail.d/baxi.local <<CONF
 [sshd]
 enabled = true
 port = $SSH_PORT
+backend = systemd
 maxretry = 5
 findtime = 10m
 bantime = 1h
 CONF
-systemctl enable --now fail2ban >/dev/null 2>&1
-systemctl restart fail2ban
-ok "fail2ban: 5 неверных паролей SSH, бан на час"
+systemctl enable fail2ban >/dev/null 2>&1 || true
+if systemctl restart fail2ban 2>/dev/null; then
+    ok "fail2ban: 5 неверных паролей SSH, бан на час"
+else
+    echo "⚠️ fail2ban не запустился, смотри: journalctl -u fail2ban -n 20. Иду дальше"
+fi
 
 # ---------- 3. обновления безопасности ----------
 cat > /etc/apt/apt.conf.d/20auto-upgrades <<CONF
@@ -75,7 +87,7 @@ cat > /etc/systemd/journald.conf.d/baxi.conf <<CONF
 SystemMaxUse=300M
 MaxRetentionSec=1month
 CONF
-systemctl restart systemd-journald
+systemctl restart systemd-journald || true
 timedatectl set-timezone Asia/Almaty 2>/dev/null || true
 timedatectl set-ntp true 2>/dev/null || true
 ok "логи до 300 МБ и месяц, время Алматы, синхронизация времени"
@@ -95,7 +107,7 @@ net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.icmp_echo_ignore_broadcasts = 1
 CONF
-sysctl -q --system
+sysctl -q --system 2>/dev/null || true
 ok "ядро: автоперезагрузка при зависании, защита сети"
 
 # ---------- 6. нехватка памяти ----------

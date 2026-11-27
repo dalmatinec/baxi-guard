@@ -5,6 +5,7 @@
 # При первом запуске спросит токен бота и твой Telegram ID, запишет в /opt/baxi-guard/.env.
 # Ключ внутреннего API (BAXI_API_KEY) берёт из /opt/linkhub/.env, если он там уже есть, иначе создаёт новый.
 set -euo pipefail
+trap 'echo "❌ Остановился на строке $LINENO: $BASH_COMMAND"' ERR
 
 DIR=/opt/baxi-guard
 cd "$DIR" || { echo "Сначала: git clone https://github.com/dalmatinec/baxi-guard $DIR"; exit 1; }
