@@ -14,8 +14,19 @@ TICK = 30
 _last_flush = 0.0
 
 
+def heartbeat() -> None:
+    """Пульс для сторожа (deploy/guard-health.sh): бот жив и фоновые дела идут."""
+    from guard import config
+    try:
+        config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        (config.DATA_DIR / "heartbeat").write_text(str(int(time.time())))
+    except OSError:
+        pass
+
+
 async def tick(bot: Bot) -> None:
     global _last_flush
+    heartbeat()
     for chat in await db.all_chats():  # режим атаки сам выключается по времени
         if 0 < chat["attack_until"] <= db.now():
             await protect.attack_off(bot, chat["chat_id"], auto=True)

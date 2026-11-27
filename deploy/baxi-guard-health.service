@@ -1,0 +1,7 @@
+# Сторож модератора: deploy/guard-health.sh. Запускается таймером baxi-guard-health.timer раз в 5 минут.
+[Unit]
+Description=baxi-guard health check
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/baxi-guard/deploy/guard-health.sh

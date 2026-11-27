@@ -38,7 +38,7 @@ PY
 
 if [ ! -f .env ]; then
     cp .env.example .env
-    read -rp "Токен модератора от @BotFather (сначала тестового бота): " TOKEN
+    read -rsp "Токен модератора от @BotFather (ввод скрыт): " TOKEN; echo
     read -rp "Твой Telegram ID (несколько через запятую): " OWNERS
     set_env BOT_TOKEN "$TOKEN"
     set_env OWNER_IDS "$OWNERS"
@@ -69,9 +69,12 @@ mkdir -p data
 chown -R baxi-guard:baxi-guard data
 chown baxi-guard:baxi-guard .env && chmod 600 .env
 
+command -v sqlite3 >/dev/null || apt-get install -y -qq sqlite3 >/dev/null
 cp deploy/baxi-guard.service /etc/systemd/system/baxi-guard.service
+cp deploy/baxi-guard-health.service deploy/baxi-guard-health.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable baxi-guard >/dev/null
+systemctl enable --now baxi-guard-health.timer >/dev/null   # сторож и копия базы раз в сутки
 systemctl restart baxi-guard
 sleep 3
 systemctl --no-pager --lines=8 status baxi-guard || true

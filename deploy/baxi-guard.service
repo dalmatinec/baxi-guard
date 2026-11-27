@@ -24,11 +24,12 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/opt/baxi-guard/data
-MemoryHigh=135M
-MemoryMax=150M
-# не больше половины ядра, ограничение потоков и файлов, логи без флуда
-CPUQuota=50%
-TasksMax=64
+# память: с 260 МБ systemd поджимает, выше 320 МБ перезапуск (сотни чатов, запас под наплыв)
+MemoryHigh=260M
+MemoryMax=320M
+# не больше одного ядра из двух: второе остаётся Бакси. Ограничение потоков и файлов, логи без флуда
+CPUQuota=100%
+TasksMax=128
 LimitNOFILE=4096
 LogRateLimitIntervalSec=30s
 LogRateLimitBurst=300
