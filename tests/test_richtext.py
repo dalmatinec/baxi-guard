@@ -22,7 +22,7 @@ def run(tmp_path, monkeypatch, fn):
         try:
             await texts.init()
             await buttons.init()
-            await db.ensure_chat(CHAT, "Круиз", "")
+            await db.ensure_chat(CHAT, "Тестовый чат", "")
             return await fn()
         finally:
             out.BUTTON_HOOK = None
@@ -110,7 +110,7 @@ def test_activity(tmp_path, monkeypatch):
             assert messages == sum(range(1, 13)) and members == 12, period
             assert top[0]["name"] == "Игрок 11" and top[0]["n"] == 12 and len(top) == 10
         html, values = await activity.card(chat, "week")
-        assert "🥇 <b>Игрок 11</b> · 12" in html and "4. Игрок 8 · 9" in html and "Круиз" in html
+        assert "🥇 <b>Игрок 11</b> · 12" in html and "4. Игрок 8 · 9" in html and "Тестовый чат" in html
         assert values["messages"] == "78"
         kb = activity.markup("week")
         assert [b.style for r in kb.inline_keyboard for b in r] == [None, None, "primary", None]

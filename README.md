@@ -226,13 +226,22 @@ bash /opt/baxi-guard-test/deploy/test-stand.sh install   # спросит два
 
 ## Новый сервер: оба бота, по порядку
 
-От root на новом сервере (Ubuntu 24.04):
+**Новый Бакси с новым токеном** (старый на старом сервере работает дальше), от root, Ubuntu 24.04:
 ```bash
 git clone -b guard-v1 https://github.com/dalmatinec/baxi-guard /opt/baxi-guard
-bash /opt/baxi-guard/deploy/server.sh                       # файрвол, fail2ban, обновления, swap, ядро
+bash /opt/baxi-guard/deploy/new-server.sh
+```
+Делает всё по порядку: защита сервера (`server.sh`), Бакси из ветки guard-api в `/opt/linkhub` (спросит токен,
+твой ID и ключ нейросети, ввод скрыт), Гард в `/opt/baxi-guard`, общий ключ API и адреса в оба `.env`
+(`guard-link.sh`), проверка. Нейросеть по умолчанию DeepSeek (`AI_MODEL=deepseek-flash`), другой сервис:
+`AI_BASE_URL` и `AI_MODEL` в `/opt/linkhub/.env`.
+
+**Перенести старого Бакси со всеми чатами и подписками** (тот же токен) вместо нового:
+```bash
+bash /opt/baxi-guard/deploy/server.sh
 bash /opt/baxi-guard/deploy/move-baxi.sh check IP_СТАРОГО   # проверка, ничего не меняет
-bash /opt/baxi-guard/deploy/move-baxi.sh move IP_СТАРОГО    # переезд основного Бакси, простой 1-2 минуты
-bash /opt/baxi-guard/deploy/install.sh                      # модератор рядом (спросит токен, ввод скрыт)
+bash /opt/baxi-guard/deploy/move-baxi.sh move IP_СТАРОГО    # простой 1-2 минуты
+bash /opt/baxi-guard/deploy/install.sh
 ```
 `move-baxi.sh` копирует `/opt/linkhub` со старого сервера, пока бот работает, потом останавливает его там
 (файлы остаются, автозапуск выключается), докопирует изменения, проверяет базу и запускает здесь с защитой
