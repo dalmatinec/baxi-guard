@@ -128,5 +128,5 @@ def test_rights(tmp_path, monkeypatch):
         await perms.set_role(CHAT, 4, perms.MOD, 1)
         assert await perms.role(bot, CHAT, 4) == perms.MOD
         assert await perms.has(bot, CHAT, 4, perms.R_GAMES) and not await perms.has(bot, CHAT, 4, perms.R_SETTINGS)
-        assert "назначать" in await perms.can_set_role(bot, CHAT, 4, 5, perms.MOD)   # модератор не назначает
+        assert "назначают" in await perms.can_set_role(bot, CHAT, 4, 5, perms.MOD)   # модератор не назначает
     run(tmp_path, fn)

@@ -35,8 +35,8 @@ CREATE TABLE IF NOT EXISTS captcha (
 CREATE INDEX IF NOT EXISTS captcha_until ON captcha (until);
 """
 MODES = {"": "выкл", "button": "кнопка «Я не бот»", "math": "пример", "emoji": "эмодзи"}
-FAILS = {"kick": ("удалю из чата", "удалён из чата"), "mute": ("не дам писать", "остался без права писать"),
-         "ban": ("забаню", "заблокирован")}
+FAILS = {"kick": ("удаление из чата", "удалён из чата"), "mute": ("запрет на сообщения", "сообщения ограничены"),
+         "ban": ("блокировка", "заблокирован")}
 EMOJI = {"🍎": "яблоко", "🚗": "машину", "🐶": "собаку", "⚽": "мяч", "🌙": "луну", "🎸": "гитару", "🍕": "пиццу",
          "🐱": "кошку", "✈️": "самолёт", "🌵": "кактус", "🎈": "шарик", "🔑": "ключ"}
 NO_WRITE = ChatPermissions(can_send_messages=False, can_send_audios=False, can_send_documents=False,
@@ -133,8 +133,8 @@ def make_task(mode: str, user_id: int) -> tuple[str, InlineKeyboardMarkup, str]:
         target = random.choice(options)
         rows = [[b(e, str(list(EMOJI).index(e))) for e in options[:3]], [b(e, str(list(EMOJI).index(e)))
                                                                           for e in options[3:]]]
-        return f"Нажми на {EMOJI[target]}.", InlineKeyboardMarkup(inline_keyboard=rows), str(list(EMOJI).index(target))
-    return ("Нажми кнопку ниже.", InlineKeyboardMarkup(inline_keyboard=[[b("✅ Я не бот", "ok")]]), "ok")
+        return f"Нажмите на {EMOJI[target]}.", InlineKeyboardMarkup(inline_keyboard=rows), str(list(EMOJI).index(target))
+    return ("Нажмите кнопку ниже.", InlineKeyboardMarkup(inline_keyboard=[[b("✅ Я не бот", "ok")]]), "ok")
 
 
 async def start_captcha(bot: Bot, chat: dict, user: User) -> bool:
@@ -218,9 +218,9 @@ async def failed(bot: Bot, chat_id: int, user_id: int, row: dict) -> None:
     how = chat["captcha_fail"] if chat["captcha_fail"] in FAILS else "kick"
     try:
         if how == "kick":
-            await actions.kick(bot, chat, user_id, bot.id, "не прошёл капчу", quiet=True)
+            await actions.kick(bot, chat, user_id, bot.id, "проверка при вступлении не пройдена", quiet=True)
         elif how == "ban":
-            await actions.ban(bot, chat, user_id, bot.id, reason="не прошёл капчу")
+            await actions.ban(bot, chat, user_id, bot.id, reason="проверка при вступлении не пройдена")
     except Exception as exc:
         log.info("Капча: не наказал %s в %s: %s", user_id, chat_id, exc)
     await texts.send(bot, chat, "captcha_fail", user=out.mention(user_id, row["name"]), fail=FAILS[how][1])

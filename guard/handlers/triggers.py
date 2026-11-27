@@ -21,9 +21,10 @@ from guard.out import thread_of
 router = Router(name="triggers")
 router.message.filter(F.chat.type.in_({"group", "supergroup"}))
 
-_ADD = re.compile(r"^\s*\+\s*тр[иі]ггер\s+(.+)$", re.I | re.S)
-_DEL = re.compile(r"^\s*-\s*тр[иі]ггер\s+(.+)$", re.I | re.S)
-_LIST = re.compile(r"^\s*тр[иі]ггеры\s*$", re.I)
+# русские и латинские: +триггер / +trigger, -триггер / -trigger, триггеры / triggers / /triggers
+_ADD = re.compile(r"^\s*\+\s*(?:тр[иі]ггер|trigger)\s+(.+)$", re.I | re.S)
+_DEL = re.compile(r"^\s*-\s*(?:тр[иі]ггер|trigger)\s+(.+)$", re.I | re.S)
+_LIST = re.compile(r"^\s*(?:тр[иі]ггеры|/?triggers(?:@\w+)?)\s*$", re.I)
 
 
 def real_reply(message: Message) -> Message | None:

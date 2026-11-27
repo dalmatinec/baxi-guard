@@ -99,38 +99,40 @@ async def add_url(bot: Bot) -> str:
 async def start_markup(bot: Bot, user_id: int) -> InlineKeyboardMarkup:
     rows = [btn("➕ Добавить в чат", url=await add_url(bot), accent=True),
             [btn("⚙️ Мои чаты", "g:chats:0"), btn("📖 Команды", "g:help:0")],
-            btn("✨ Мой ник", "nk:home")]
+            btn("👤 Профиль", "pf:home")]
     if perms.is_owner(user_id):
         rows.append(btn("🛠 Админка", "a:home:0"))
     return kb(*rows)
 
 
 HELP = screen("📖 Команды в чате", [
-    "Роли: 👑 владелец (создатель чата), ⭐ админ, 🛡 модератор. Админка в Telegram сама ничего не даёт.",
-    "Кого: ответом, @username или ID. Время: 30m, 2h, 3d, 1w.",
+    "Роли: 👑 владелец (создатель чата), ⭐ админ, 🛡 модератор, 🔰 мл. модератор, 🎮 ведущий игр. "
+    "Админка в Telegram сама ничего не даёт. Кого: ответом, @username или ID. Время: 30m, 2h, 3d, 1w.",
+    "У каждой русской команды есть латинская: в скобках.",
     "",
-    "<b>Модератор</b>",
-    "/mute · /unmute · /warn · /unwarn · /warns",
-    "/ban · /unban · /kick · /attack",
-    "/del · /pin · /unpin · /link",
+    "<b>🔰 Мл. модератор</b>",
+    "/mute · /unmute · /warn · /unwarn · /warns · /del · /pin · /unpin",
+    "",
+    "<b>🎮 Ведущий игр</b>",
     "/game · /list · /close · /open · /fk 30 · /random 36 · /endgame",
-    "+триггер слово (ответом) · -триггер слово · триггеры",
-    "+топ · +топ игра · +топ 3д · -топ (ответом)",
+    "рандом 36 (/random 36) · закрыть список (/close) · фк 30 (/fk 30)",
+    "+топ, +топ игра, +топ 3д (/top) · -топ (/untop) ответом",
+    "+в список (/add) ответом · убрать 3 (/remove 3)",
     "",
-    "<b>Админ</b>",
-    "/mod · /unmod: назначить и снять модератора (ответом)",
-    "/trust · /untrust: белый список (ответом)",
-    "/settings или настройки: все настройки прямо в чате · /chat",
-    "+приветствие (ответом на сообщение) · -приветствие · приветствие",
-    "капча кнопка · капча пример · капча эмодзи · капча выкл",
+    "<b>🛡 Модератор</b>: всё выше и",
+    "/ban · /unban · /kick · /attack · /link",
+    "+триггер слово (+trigger) ответом · -триггер слово (-trigger) · триггеры (/triggers)",
     "",
-    "<b>Владелец</b>",
-    "/adm: назначить админа (ответом)",
+    "<b>⭐ Админ и 👑 владелец</b>",
+    "роль (/role) ответом: выбрать роль кнопкой. Админа назначает только владелец",
+    "/allow · /unallow: белый список (ответом)",
+    "+приветствие (/setwelcome) ответом · -приветствие (/welcomeoff) · приветствие (/welcome)",
+    "капча кнопка/пример/эмодзи/выкл (/captcha button/math/emoji/off)",
+    "настройки (/settings): кнопка в личку · /chat",
     "",
     "<b>Все</b>",
-    "/profile или профиль · /leave: выписаться из списка",
-    "/stat или стата: активность чата и топ-10",
-    "✨ свой ник со шрифтом и премиум-эмодзи: в личке бота, кнопка «Мой ник»",
+    "профиль (/profile) · стата (/stat) · инфо (/info) · выписаться (/leave)",
+    "👤 профиль, ник и стикер профиля: в личке бота, кнопка «Профиль»",
 ], note="Команда и ответ бота сами исчезают через несколько секунд, это меняется в разделе Чистота.")
 
 
@@ -140,6 +142,9 @@ HELP = screen("📖 Команды в чате", [
 async def cmd_start(message: Message, command: CommandObject, state: FSMContext) -> None:
     await state.clear()
     arg = command.args or ""
+    if arg == "help":
+        await message.answer(HELP, reply_markup=kb(back("g:home:0")))
+        return
     if arg.startswith("s_"):
         try:
             chat_id = int(arg[2:])
@@ -434,12 +439,15 @@ async def trust_screen(bot: Bot, chat_id: int, user_id: int) -> tuple[str, Inlin
     return text, kb(*rows, btn("🌐 Разрешённые домены", f"g:dm:{chat_id}"), back(f"g:c:{chat_id}"))
 
 
-async def role_card(bot: Bot, chat_id: int, target: int, name: str) -> tuple[str, InlineKeyboardMarkup]:
+async def role_card(bot: Bot, chat_id: int, target: int, name: str,
+                    actor: int = 0) -> tuple[str, InlineKeyboardMarkup]:
     r = await perms.role(bot, chat_id, target)
-    text = screen(f"⭐ {out.esc(name)}", [row("🎭", "Роль", perms.ROLE_TITLES[r])], path="👥 Роли")
-    rows = [[btn(("✅ " if r == perms.MOD else "") + "🛡 Модератор", f"g:rk:{chat_id}:{target}:mod"),
-             btn(("✅ " if r == perms.ADMIN else "") + "⭐ Админ", f"g:rk:{chat_id}:{target}:admin")],
-            btn("🚫 Снять роль", f"g:rk:{chat_id}:{target}:none")]
+    keys = await perms.roles_for(bot, chat_id, actor) if actor else list(perms.ROLES)
+    lines = [row("🎭", "Роль", perms.ROLE_TITLES[r]), ""]
+    lines += [f"{perms.ROLES[k][0]}: {perms.ROLES[k][2]}" for k in keys]
+    text = screen(f"⭐ {out.esc(name)}", lines, path="👥 Роли")
+    rows = grid([btn(("✅ " if r == k else "") + perms.ROLES[k][0], f"g:rk:{chat_id}:{target}:{k}") for k in keys], 2)
+    rows.append(btn("🚫 Снять роль", f"g:rk:{chat_id}:{target}:none"))
     return text, kb(*rows, back(f"g:wl:{chat_id}"))
 
 
@@ -829,26 +837,15 @@ async def on_button(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:  # 
     elif scr == "rk" and op.isdigit():   # роль человека
         target = int(op)
         name = await db.member_name(chat_id, target) or str(target)
-        if arg in ("mod", "admin", "none"):
-            new = {"mod": perms.MOD, "admin": perms.ADMIN, "none": perms.NONE}[arg]
-            problem = await perms.can_set_role(bot, chat_id, user_id, target, new)
-            if problem:
-                await cb.answer(problem[:1].upper() + problem[1:], show_alert=True)
+        if arg in (*perms.ROLES, "none"):
+            from guard.handlers.moderation import give_role
+            new = perms.NONE if arg == "none" else arg
+            error = await give_role(bot, chat, user_id, out.mention(user_id, out.full_name(cb.from_user)), target,
+                                    name, new)
+            if error and "уже" not in error and "и так" not in error:
+                await cb.answer(re.sub(r"<[^>]+>", "", error)[:190], show_alert=True)
                 return
-            old = await perms.role(bot, chat_id, target)
-            if old != new:
-                await perms.set_role(chat_id, target, new, user_id)
-                from guard import commands, texts
-                await commands.refresh_member(bot, chat_id, target)
-                who_ = out.mention(target, name)
-                admin = out.mention(user_id, out.full_name(cb.from_user))
-                if new:
-                    await texts.send(bot, chat, "role_admin" if new == perms.ADMIN else "role_mod", ttl=0,
-                                     user=who_, admin=admin)
-                else:
-                    await texts.send(bot, chat, "role_removed", ttl=0, user=who_, admin=admin,
-                                     role=perms.ROLE_TITLES[old].split(" ", 1)[-1].lower())
-        await show(cb, *await role_card(bot, chat_id, target, name))
+        await show(cb, *await role_card(bot, chat_id, target, name, user_id))
 
     elif scr == "lg":
         if op == "set":
@@ -1076,7 +1073,7 @@ async def on_input(message: Message, state: FSMContext, bot: Bot) -> None:
                                  "Пришлите @username или ID ещё раз, или /cancel")
             return
         await state.clear()
-        text, markup = await role_card(bot, chat_id, row["user_id"], row["name"] or raw)
+        text, markup = await role_card(bot, chat_id, row["user_id"], row["name"] or raw, message.from_user.id)
         await message.answer(text, reply_markup=markup)
         return
     elif kind == "log":

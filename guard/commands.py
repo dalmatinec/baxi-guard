@@ -15,24 +15,26 @@ log = logging.getLogger(__name__)
 
 PRIVATE = [("start", "Главное меню"), ("settings", "Мои чаты и их настройки"), ("cancel", "Отменить ввод")]
 OWNER_DM = [("admin", "Все чаты и здоровье бота"), *PRIVATE]
-GROUP = [("profile", "Мой профиль"), ("stat", "Активность чата")]
-MOD = [("mute", "Мут: ответом, время, причина"), ("unmute", "Снять мут"), ("warn", "Предупреждение"),
-       ("unwarn", "Снять предупреждение"), ("warns", "Предупреждения человека"),
-       ("ban", "Бан: ответом, время, причина"), ("unban", "Разбан"), ("kick", "Выгнать без бана"),
-       ("del", "Удалить сообщение"), ("pin", "Закрепить"), ("unpin", "Открепить"), ("link", "Ссылка-приглашение"),
-       ("attack", "Режим атаки"), ("game", "Запустить игру"), ("list", "Показать список игры"),
-       ("close", "Закрыть список"), ("open", "Открыть список"), ("fk", "ФК для игры: /fk 30"),
-       ("random", "Рандом: /random 36"), ("endgame", "Закончить игру"), ("profile", "Профиль"),
-       ("stat", "Активность"), ("v", "Пинг")]
-ADMIN = [*MOD[:-3], ("trust", "В белый список (ответом)"), ("untrust", "Из белого списка"),
-         ("mod", "Назначить модератора (ответом)"), ("unmod", "Снять роль (ответом)"),
-         ("welcome", "Приветствие: как выглядит"), ("setwelcome", "Приветствие: ответом на сообщение"),
-         ("welcomeoff", "Выключить приветствие"), ("captcha", "Капча: button, math, emoji, off"),
-         ("settings", "Настройки прямо в чате"), ("chat", "Чат и права бота"), ("profile", "Профиль"),
-         ("stat", "Активность"), ("v", "Пинг")]
-OWNER = [*ADMIN[:-3], ("adm", "Назначить админа (ответом)"), ("profile", "Профиль"), ("stat", "Активность"),
-         ("v", "Пинг")]
-BY_ROLE = {perms.MOD: MOD, perms.ADMIN: ADMIN, perms.OWNER: OWNER}
+GROUP = [("profile", "Мой профиль"), ("stat", "Активность чата"), ("info", "Информация о чате")]
+_TAIL = [("profile", "Профиль"), ("stat", "Активность"), ("info", "Информация о чате"), ("v", "Пинг")]
+_PUNISH = [("mute", "Мут: ответом, время, причина"), ("unmute", "Снять мут"), ("warn", "Предупреждение"),
+           ("unwarn", "Снять предупреждение"), ("warns", "Предупреждения человека")]
+_CLEAN = [("del", "Удалить сообщение"), ("pin", "Закрепить"), ("unpin", "Открепить")]
+_GAMES = [("game", "Запустить игру"), ("list", "Показать список игры"), ("close", "Закрыть список"),
+          ("open", "Открыть список"), ("fk", "ФК для игры: /fk 30"), ("random", "Рандом: /random 36"),
+          ("top", "Топ (ответом)"), ("endgame", "Закончить игру")]
+HOST = [*_GAMES, *_TAIL]
+JUNIOR = [*_PUNISH, *_CLEAN, *_TAIL]
+MOD = [*_PUNISH, ("ban", "Бан: ответом, время, причина"), ("unban", "Разбан"), ("kick", "Выгнать без бана"),
+       *_CLEAN, ("link", "Ссылка-приглашение"), ("attack", "Режим атаки"), *_GAMES, ("triggers", "Триггеры чата"),
+       *_TAIL]
+ADMIN = [*MOD[:-len(_TAIL)], ("role", "Роль: ответом, выбор кнопкой"), ("allow", "В белый список (ответом)"),
+         ("unallow", "Из белого списка"), ("welcome", "Приветствие: как выглядит"),
+         ("setwelcome", "Приветствие: ответом на сообщение"), ("welcomeoff", "Выключить приветствие"),
+         ("captcha", "Капча: button, math, emoji, off"), ("settings", "Настройки (в личке)"),
+         ("chat", "Чат и права бота"), *_TAIL]
+OWNER = ADMIN
+BY_ROLE = {perms.HOST: HOST, perms.JUNIOR: JUNIOR, perms.MOD: MOD, perms.ADMIN: ADMIN, perms.OWNER: OWNER}
 
 
 def _cmds(items: list[tuple[str, str]]) -> list[BotCommand]:
@@ -82,8 +84,8 @@ async def refresh_chat(bot: Bot, chat_id: int) -> None:
 
 async def refresh_all_once(bot: Bot) -> None:
     """Один раз после обновления: разложить меню по всем чатам (в фоне, с паузами)."""
-    if await db.kv_get("menus_v4") == "1":
+    if await db.kv_get("menus_v5") == "1":
         return
     for chat in await db.all_chats():
         await refresh_chat(bot, chat["chat_id"])
-    await db.kv_set("menus_v4", "1")
+    await db.kv_set("menus_v5", "1")

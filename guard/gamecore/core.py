@@ -231,11 +231,13 @@ def fk_mark(n: int, need: int) -> str:
 
 # ---------- живое сообщение ----------
 
-def entry_line(e: Entry, fk_need: int, fk_have: int) -> str:
+def entry_line(e: Entry, fk_need: int, fk_have: int, hashtag: str = "") -> str:
     from guard.out import esc, mention
     line = f"{e.pos}. {mention(e.user_id, e.name or str(e.user_id))}"
     if e.username:
         line += f" @{esc(e.username)}"
+    if hashtag:   # запись по хэштегу: у каждого его хэштег
+        line += f" #{esc(hashtag)}"
     if e.top:
         line += " ⭐"
     if fk_need:
@@ -249,7 +251,8 @@ async def render(game: dict) -> tuple[str, bool]:
     from guard.out import esc
     items = await entries(game["id"])
     fk = await fk_counts(game["id"]) if game["fk"] else {}
-    lines = [entry_line(e, game["fk"], fk.get(e.user_id, 0)) for e in items] or ["пока никого"]
+    tag = game["hashtag"] if game["mode"] == "hashtag" else ""
+    lines = [entry_line(e, game["fk"], fk.get(e.user_id, 0), tag) for e in items]
     title = GAMES[game["kind"]].title
     if game["status"] == "closed":
         title += " · список закрыт"
@@ -258,7 +261,7 @@ async def render(game: dict) -> tuple[str, bool]:
     else:
         how = "Записаться: кнопка ниже, @ или свой @юзернейм" if game["status"] == "open" else ""
     values = dict(game=title, fk=f" · ФК {game['fk']}" if game["fk"] else "", count=len(items), how=how)
-    text = await texts.render(game["chat_id"], "game_list", list="\n".join(lines), **values)
+    text = _no_empty_list(await texts.render(game["chat_id"], "game_list", list="\n".join(lines), **values))
     cut = False
     while len(text) > MAX_TEXT and len(lines) > 10:
         lines = lines[:-10]
@@ -268,16 +271,18 @@ async def render(game: dict) -> tuple[str, bool]:
     return text, cut
 
 
+def _no_empty_list(text: str) -> str:
+    """Пока никого нет, между разделителями пусто: оставляем один разделитель."""
+    return re.sub(r"(➖+)\n\s*\n(➖+)", r"\1", text)
+
+
 def list_markup(game: dict, cut: bool):
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     rows = []
     if game["status"] == "open":
-        row = []
-        if game["mode"] == "button":
-            row.append(InlineKeyboardButton(text="✅ Записаться", callback_data=f"lg:join:{game['id']}",
-                                            style="success"))
-        row.append(InlineKeyboardButton(text="❌ Выписаться", callback_data=f"lg:leave:{game['id']}"))
-        rows.append(row)
+        if game["mode"] == "button":   # выписаться: /leave или «выписаться», без кнопки
+            rows.append([InlineKeyboardButton(text="✅ Записаться", callback_data=f"lg:join:{game['id']}",
+                                              style="success")])
         # кнопки ведущего: работают у тех, у кого есть роль (право 🎮 игры)
         rows.append([InlineKeyboardButton(text="🔒 Закрыть список", callback_data=f"lg:close:{game['id']}"),
                      InlineKeyboardButton(text="🎯 ФК", callback_data=f"lg:setfk:{game['id']}")])

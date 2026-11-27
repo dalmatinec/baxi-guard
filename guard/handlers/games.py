@@ -33,9 +33,11 @@ _END = re.compile(r"^\s*(закончить игру|сбросить игру|/
 _FK = re.compile(r"^\s*(?:/fk(?:@\w+)?(?:\s+(\d{1,5}))?|фк\s+(\d{1,5}))\s*$", re.I)   # «фк» только с числом
 _LIST = re.compile(r"^\s*/list(@\w+)?\s*$", re.I)
 _LEAVE = re.compile(r"^\s*(/leave(@\w+)?|выписаться)\s*$", re.I)
-_TOP = re.compile(r"^\s*([+-])\s*топ(?:\s+(игра|навсегда|\d{1,3}\s*[мчдmhd]))?\s*$", re.I)
-_ADD = re.compile(r"^\s*\+\s*в\s+список\s*$", re.I)
-_REMOVE = re.compile(r"^\s*убрать\s+(\d{1,4})\s*$", re.I)
+# у каждой русской команды есть латинская пара: +топ / +top (или /top, /untop), +в список / /add, убрать 3 / /remove 3
+_TOP = re.compile(r"^\s*(?:([+-])\s*(?:топ|top)|/(un)?top(?:@\w+)?)(?:\s+(игра|game|навсегда|forever|\d{1,3}\s*[мчдmhd]))?\s*$",
+                  re.I)
+_ADD = re.compile(r"^\s*(?:\+\s*в\s+список|/add(?:@\w+)?)\s*$", re.I)
+_REMOVE = re.compile(r"^\s*(?:убрать|/remove(?:@\w+)?)\s+(\d{1,4})\s*$", re.I)
 _UNITS = {"м": 60, "m": 60, "ч": 3600, "h": 3600, "д": 86400, "d": 86400}
 
 
@@ -65,8 +67,12 @@ async def admin_ok(bot: Bot, message: Message) -> bool:
 # ---------- запуск: /game ----------
 
 def games_menu() -> tuple[str, InlineKeyboardMarkup]:
-    rows = [[(f"{g.icon} {g.title}", f"lg:pick:{g.kind}")] for g in GAMES.values()]
-    return "🎮 <b>Игры</b>\n➖➖➖➖➖\nВыбери игру:", kb(rows + [[("✖️ Отмена", "lg:cancel")]])
+    # игра и способ записи сразу одной кнопкой: «🎰 Рулетка · #️⃣ по хэштегу»
+    def label(g, title: str) -> str:
+        icon, _, name = title.partition(" ")
+        return f"{g.icon} {g.title} · {icon} {name.lower()}"
+    rows = [[(label(g, title), f"lg:mode:{g.kind}:{code}")] for g in GAMES.values() for code, title in g.modes]
+    return "🎮 <b>Игры</b>\n➖➖➖➖➖\nВ какую играем?", kb(rows + [[("✖️ Отмена", "lg:cancel")]])
 
 
 @router.message(Command("game"))
@@ -422,16 +428,17 @@ async def on_top(message: Message, bot: Bot, m, game: dict | None) -> None:
     chat_id = message.chat.id
     rt = real_reply(message)
     if not rt or not rt.from_user or rt.from_user.is_bot:
-        await say(bot, chat_id, "ответь «+топ» или «-топ» на сообщение человека.\n"
+        await say(bot, chat_id, "ответь «+топ» (/top) или «-топ» (/untop) на сообщение человека.\n"
                                 "+топ: постоянный · +топ игра: на эту игру · +топ 3д: на срок", reply_to=message)
         return
     u = rt.from_user
     who = mention(u.id, name_of(u))
-    if m.group(1) == "-":
+    if m.group(1) == "-" or m.group(2):   # «-топ», «-top» или /untop
         n = await tops.take(chat_id, u.id)
         await say(bot, chat_id, f"⭐ {who} больше не топ" if n else f"{who} и так не топ", reply_to=message)
         return
-    arg = (m.group(2) or "").lower().replace(" ", "")
+    arg = (m.group(3) or "").lower().replace(" ", "")
+    arg = {"game": "игра", "forever": "навсегда"}.get(arg, arg)
     if arg == "игра":
         if not game:
             await say(bot, chat_id, "сейчас нет игры, «+топ игра» выдаётся на текущую игру", reply_to=message)

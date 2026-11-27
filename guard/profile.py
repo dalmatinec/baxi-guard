@@ -4,12 +4,15 @@
 Активность и предупреждения модератор знает сам, репутацию, ранг и монеты берёт у Бакси по API."""
 
 import datetime
+import logging
 import time
 
 from aiogram import Bot
 from aiogram.types import User
 
 from guard import config, db, out, perms
+
+log = logging.getLogger(__name__)
 
 NO_DATA = "—"
 
@@ -91,5 +94,15 @@ async def values(bot: Bot, chat: dict, user: User) -> dict:
 
 
 async def send(bot: Bot, chat: dict, user: User, reply_to=None):
-    from guard import texts
-    return await texts.send(bot, chat, "profile", reply_to=reply_to, ttl=0, **await values(bot, chat, user))
+    """Стикер человека (если задал в личке), следом карточка профиля."""
+    from guard import nicks, texts
+    thread = out.thread_of(reply_to) if reply_to else None
+    sticker = await nicks.sticker_of(user.id)
+    if sticker:
+        try:
+            await bot.send_sticker(chat["chat_id"], sticker, reply_to_message_id=reply_to.message_id if reply_to else None)
+            reply_to = None
+        except Exception as exc:
+            log.info("Стикер профиля %s не отправился: %s", user.id, exc)
+    return await texts.send(bot, chat, "profile", reply_to=reply_to, ttl=0, thread=thread,
+                            **await values(bot, chat, user))

@@ -1,6 +1,6 @@
 """Свой ник за монеты Бакси: со своим шрифтом (жирный, курсив, зачёркнутый, спойлер) и премиум-эмодзи.
 
-Покупается кнопками в личке модератора (✨ Мой ник), монеты списывает Бакси (POST /v1/coins/spend).
+Покупается кнопками в личке модератора (👤 Профиль → ✨ Ник), монеты списывает Бакси (POST /v1/coins/spend).
 Ник виден везде, где модератор упоминает человека (out.mention): списки игр, профиль, сервисные сообщения,
 топ активности. Бакси получает его событием nick и показывает в своих упоминаниях.
 
@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS nicks (
     tail     TEXT    NOT NULL DEFAULT '',
     plain    TEXT    NOT NULL DEFAULT '',
     paid     INTEGER NOT NULL DEFAULT 0,
+    ts       INTEGER NOT NULL DEFAULT 0
+);
+-- стикер профиля: приходит в чате перед карточкой профиля
+CREATE TABLE IF NOT EXISTS profile_stickers (
+    user_id  INTEGER PRIMARY KEY,
+    file_id  TEXT    NOT NULL,
     ts       INTEGER NOT NULL DEFAULT 0
 );
 """
@@ -166,3 +172,21 @@ async def _tell_baxi(user_id: int, nick: Nick) -> None:
                                "body": nick.body, "tail": nick.tail, "plain": nick.plain, "ts": db.now()})
     except Exception:
         log.exception("Не передал ник Бакси")
+
+
+# ---------- стикер профиля ----------
+
+async def sticker_of(user_id: int) -> str:
+    async with db.conn().execute("SELECT file_id FROM profile_stickers WHERE user_id = ?", (user_id,)) as cur:
+        row = await cur.fetchone()
+    return row[0] if row else ""
+
+
+async def set_sticker(user_id: int, file_id: str) -> None:
+    if file_id:
+        await db.conn().execute("INSERT INTO profile_stickers (user_id, file_id, ts) VALUES (?, ?, ?) ON CONFLICT "
+                                "(user_id) DO UPDATE SET file_id = excluded.file_id, ts = excluded.ts",
+                                (user_id, file_id, db.now()))
+    else:
+        await db.conn().execute("DELETE FROM profile_stickers WHERE user_id = ?", (user_id,))
+    await db.conn().commit()

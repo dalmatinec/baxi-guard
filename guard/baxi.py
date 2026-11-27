@@ -120,8 +120,13 @@ async def trusted(chat_id: int) -> set[int]:
 
 async def wallet(user_id: int) -> int | None:
     """Монеты человека у Бакси или None, если Бакси не настроен или не отвечает."""
-    data = await _get(f"/v1/wallet/{user_id}")
+    data = await wallet_info(user_id)
     return int(data["coins"]) if data and "coins" in data else None
+
+
+async def wallet_info(user_id: int) -> dict | None:
+    """{"coins", "level"} у Бакси или None."""
+    return await _get(f"/v1/wallet/{user_id}")
 
 
 async def spend(user_id: int, amount: int, ref: str, reason: str) -> dict | None:

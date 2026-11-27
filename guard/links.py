@@ -85,17 +85,17 @@ def link_violation(links: list[Link], *, allowed_domains: list[str] | set[str], 
     own = (own_username or "").lower()
     for link in links:
         if newbie:
-            return "ссылка от новичка"
+            return "ссылка в первые сутки после вступления"
         if link.kind == "invite":
             if not domain_allowed("t.me", allowed_domains):
-                return "приглашение в чужой чат"
+                return "приглашение в сторонний чат"
         elif link.kind == "telegram":
             if own and link.tg_name == own:
                 continue
             if not domain_allowed("t.me", allowed_domains):
-                return "ссылка на чужой канал или бота"
+                return "реклама стороннего канала или бота"
         elif not domain_allowed(link.domain, allowed_domains):
-            return "ссылка на сайт"
+            return "ссылка на сторонний ресурс"
     return ""
 
 
@@ -103,15 +103,15 @@ def link_violation(links: list[Link], *, allowed_domains: list[str] | set[str], 
 
 _SCAM = [
     (re.compile(r"(заработ|зараба|доход|прибыл|профит|выплат)\w*.{0,60}?\b(в|за)\s*(день|сутки|неделю|час)\b"),
-     "заработок в день"),
+     "предложение заработка"),
     (re.compile(r"\b(\d[\d\s]{1,9})\s*(\$|руб|р\b|тг|₸|тенге|usdt|долл|евро|€)\w*.{0,25}?\b(в|за)\s*(день|сутки)\b"),
-     "заработок в день"),
+     "предложение заработка"),
     (re.compile(r"\b(пиши|пишите|напиши|напишите|стучи|стучите|жду|обращайтесь|обращаться)\w*\s+"
                 r"(мне\s+|в\s+)?(в\s+)?(лс|личку|личные|личных|директ|пм|лич)\b"),
-     "пиши в лс"),
-    (re.compile(r"\b(в|во)\s+(лс|личку|личные)\s+(пиши|пишите|за\s+подробност|подробност)"), "пиши в лс"),
+     "приглашение в личные сообщения"),
+    (re.compile(r"\b(в|во)\s+(лс|личку|личные)\s+(пиши|пишите|за\s+подробност|подробност)"), "приглашение в личные сообщения"),
     (re.compile(r"бесплатно\s+разда|разда\w*\s+(бесплатно|даром)|раздач\w*\s+(денег|крипт|usdt|тон|ton|звезд|подарк)"),
-     "бесплатно раздаю"),
+     "сомнительная раздача"),
 ]
 _WALLETS = [
     re.compile(r"\b0x[a-fA-F0-9]{40}\b"),                          # ETH, BSC
@@ -159,9 +159,9 @@ def scam_reason(text: str) -> str:
         if pattern.search(plain) or pattern.search(twins):
             return why
     if has_wallet(text):
-        return "крипто-кошелёк"
+        return "реквизиты криптокошелька"
     if has_card(text):
-        return "номер карты"
+        return "банковские реквизиты"
     return ""
 
 

@@ -8,7 +8,7 @@ from datetime import datetime
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject
-from aiogram.types import InlineKeyboardButton, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from guard import actions, config, db, out, perms, texts
 from guard.actions import ActionError
@@ -401,22 +401,23 @@ def people_list(rows: list[dict]) -> str:
 
 # ---------- белый список ----------
 
-@router.message(Command("trust", "untrust"))
+@router.message(Command("allow", "unallow", "trust", "untrust"))
 async def cmd_trust(message: Message, chat_row: dict, allowed: bool, command: CommandObject) -> None:
-    """/trust ответом: в белый список (можно ссылки и пересылки), без ответа: весь список. /untrust ответом: убрать."""
+    """/allow ответом: в белый список (можно ссылки и пересылки), без ответа: весь список. /unallow ответом:
+    убрать. /trust и /untrust: старые названия, работают так же."""
     if not await settings_gate(message, chat_row, allowed, perms.R_SETTINGS):
         return
     rt = real_reply(message)
     if rt is None or not rt.from_user or rt.sender_chat or rt.from_user.is_bot:
         rows = await db.whitelist(message.chat.id)
         text = ("белый список (им можно ссылки и пересылки):\n" + people_list(rows)) if rows else \
-            "белый список пуст. Добавить: ответьте /trust на сообщение человека."
+            "белый список пуст. Добавить: ответьте /allow на сообщение человека."
         await done(message, chat_row, text)
         return
     u = rt.from_user
     await db.touch_member(message.chat.id, u.id, u.username or "", out.full_name(u), message=False)
     inside = await db.in_whitelist(message.chat.id, u.id)
-    want = command.command.lower() == "trust"
+    want = command.command.lower() in ("allow", "trust")
     if want == inside:
         await done(message, chat_row, f"{out.mention(u.id, out.full_name(u))} "
                                       f"{'уже' if inside else 'и так не'} в белом списке.")
@@ -427,21 +428,65 @@ async def cmd_trust(message: Message, chat_row: dict, allowed: bool, command: Co
     drop_command(message, chat_row)
 
 
-# ---------- роли: модератор, админ, владелец ----------
+# ---------- роли: одна команда, выбор роли кнопкой ----------
+
+ROLE_TEXT = {perms.ADMIN: "role_admin", perms.MOD: "role_mod", perms.JUNIOR: "role_junior", perms.HOST: "role_host"}
+ROLE_CMD = re.compile(r"^\s*(?:/role(?:@\w+)?|роль)(?:\s+(\S+))?\s*$", re.I)
+
 
 def staff_lines(rows: list[dict]) -> list[str]:
     return [f"{i}. {out.mention(r['user_id'], r['name'] or str(r['user_id']))}: {perms.rights_text(r['flags'])}"
             for i, r in enumerate(rows, 1)]
 
 
-@router.message(Command("mod", "adm", "unmod"))
-async def cmd_role(message: Message, chat_row: dict, allowed: bool, command: CommandObject) -> None:
-    """Ответом: /mod модератор, /adm админ, /unmod снять роль. Без ответа: кто с какой ролью."""
+async def give_role(bot: Bot, chat: dict, actor_id: int, actor_html: str, target_id: int, target_name: str,
+                    new: str, reply_to: Message | None = None) -> str:
+    """Поставить роль (или снять, new=''). Возвращает ошибку или пусто. Сервисное сообщение по тексту чата."""
+    chat_id = chat["chat_id"]
+    problem = await perms.can_set_role(bot, chat_id, actor_id, target_id, new)
+    if problem:
+        return problem + "."
+    old = await perms.role(bot, chat_id, target_id)
+    who_ = out.mention(target_id, target_name)
+    if old == new:
+        return (f"{who_} уже {perms.ROLE_TITLES[new].split(' ', 1)[-1].lower()}." if new
+                else f"у {who_} и так нет роли.")
+    await perms.set_role(chat_id, target_id, new, actor_id)
+    from guard import commands
+    await commands.refresh_member(bot, chat_id, target_id)
+    if new:
+        await texts.send(bot, chat, ROLE_TEXT[new], reply_to=reply_to, ttl=0, user=who_, admin=actor_html)
+    else:
+        await texts.send(bot, chat, "role_removed", reply_to=reply_to, ttl=0, user=who_, admin=actor_html,
+                         role=perms.ROLE_TITLES[old].split(" ", 1)[-1].lower())
+    return ""
+
+
+async def role_picker(bot: Bot, chat_id: int, actor: int, target: int, name: str):
+    """Текст и кнопки выбора роли. Кнопки нажимает только тот, кто вызвал."""
+    current = await perms.role(bot, chat_id, target)
+    lines = [f"🎭 <b>Роль для {out.mention(target, name)}</b>", "➖➖➖➖➖",
+             f"Сейчас: {perms.ROLE_TITLES[current]}", ""]
+    rows = []
+    for key in await perms.roles_for(bot, chat_id, actor):
+        title, _flags, about = perms.ROLES[key]
+        lines.append(f"{title}: {about}")
+        rows.append([InlineKeyboardButton(text=("✅ " if key == current else "") + title,
+                                          callback_data=f"rl:{actor}:{target}:{key}")])
+    rows.append([InlineKeyboardButton(text="🚫 Снять роль", callback_data=f"rl:{actor}:{target}:none"),
+                 InlineKeyboardButton(text="✖️ Отмена", callback_data=f"rl:{actor}:{target}:x")])
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(Command("role", "mod", "adm", "unmod"))
+@router.message(F.text.regexp(ROLE_CMD))
+async def cmd_role(message: Message, chat_row: dict, allowed: bool, command: CommandObject | None = None) -> None:
+    """/role или «роль» ответом: выбрать роль кнопкой (или сразу: /role mod, /role junior, /role host,
+    /role admin, /role none). Без ответа: кто с какой ролью. /mod /adm /unmod: старые названия."""
     if perms.is_anon_admin(message):
         await done(message, chat_row, "анонимному админу бот прав не даёт, напишите от своего имени.")
         return
-    if not message.from_user or await perms.role(message.bot, message.chat.id, message.from_user.id) not in (
-            perms.OWNER, perms.ADMIN):
+    if not message.from_user or not await perms.roles_for(message.bot, message.chat.id, message.from_user.id):
         return
     if not allowed and not perms.is_owner(message.from_user.id):
         await done(message, chat_row, "модерация в этом чате не активна.")
@@ -450,32 +495,63 @@ async def cmd_role(message: Message, chat_row: dict, allowed: bool, command: Com
     if rt is None or not rt.from_user or rt.sender_chat or rt.from_user.is_bot:
         lines = staff_lines(await db.rights_list(message.chat.id))
         text = ("роли в боте:\n" + "\n".join(lines)) if lines else \
-            "ролей пока ни у кого нет (кроме владельца). Назначить: ответьте /mod или /adm на сообщение человека."
+            "ролей пока ни у кого нет (кроме владельца). Назначить: ответьте /role на сообщение человека."
         await done(message, chat_row, text)
         return
     u = rt.from_user
-    new = {"mod": perms.MOD, "adm": perms.ADMIN, "unmod": perms.NONE}[command.command.lower()]
-    problem = await perms.can_set_role(message.bot, message.chat.id, message.from_user.id, u.id, new)
-    if problem:
-        await done(message, chat_row, problem + ".")
-        return
-    old = await perms.role(message.bot, message.chat.id, u.id)
-    who_ = out.mention(u.id, out.full_name(u))
-    if old == new:
-        await done(message, chat_row, f"{who_} уже {perms.ROLE_TITLES[new].split(' ', 1)[-1].lower()}."
-                   if new else f"у {who_} и так нет роли.")
-        return
     await db.touch_member(message.chat.id, u.id, u.username or "", out.full_name(u), message=False)
-    await perms.set_role(message.chat.id, u.id, new, message.from_user.id)
-    from guard import commands
-    await commands.refresh_member(message.bot, message.chat.id, u.id)
-    if new:
-        await texts.send(message.bot, chat_row, "role_admin" if new == perms.ADMIN else "role_mod",
-                         reply_to=message, ttl=0, user=who_, admin=admin_of(message))
-    else:
-        await texts.send(message.bot, chat_row, "role_removed", reply_to=message, ttl=0, user=who_,
-                         admin=admin_of(message), role=perms.ROLE_TITLES[old].split(" ", 1)[-1].lower())
+    name = command.command.lower() if command else "role"
+    arg = (command.args or "").strip().lower() if command else (ROLE_CMD.match(message.text).group(1) or "").lower()
+    new = {"mod": perms.MOD, "adm": perms.ADMIN, "unmod": perms.NONE}.get(name)
+    if new is None and arg:
+        new = perms.ROLE_WORDS.get(arg)
+    if new is None:
+        text, markup = await role_picker(message.bot, message.chat.id, message.from_user.id, u.id, out.full_name(u))
+        await out.answer(message, text, ttl=300, markup=markup)
+        drop_command(message, chat_row)
+        return
+    error = await give_role(message.bot, chat_row, message.from_user.id, admin_of(message), u.id, out.full_name(u),
+                            new, reply_to=message)
+    if error:
+        await done(message, chat_row, error)
+        return
     drop_command(message, chat_row)
+
+
+@router.callback_query(F.data.startswith("rl:"))
+async def role_press(cb: CallbackQuery, bot: Bot) -> None:
+    try:
+        _, actor, target, key = cb.data.split(":")
+        actor, target = int(actor), int(target)
+    except ValueError:
+        await cb.answer()
+        return
+    if cb.from_user.id != actor:
+        await cb.answer("Роль выбирает тот, кто вызвал команду", show_alert=True)
+        return
+    if key == "x":
+        await cb.answer()
+        try:
+            await cb.message.delete()
+        except TelegramAPIError:
+            pass
+        return
+    chat = await db.ensure_chat(cb.message.chat.id)
+    member = await db.get_member(chat["chat_id"], target) or {}
+    new = perms.NONE if key == "none" else key
+    if new and new not in perms.ROLES:
+        await cb.answer()
+        return
+    error = await give_role(bot, chat, actor, out.mention(actor, out.full_name(cb.from_user)), target,
+                            member.get("name") or str(target), new)
+    if error:
+        await cb.answer(re.sub(r"<[^>]+>", "", error)[:190], show_alert=True)
+        return
+    await cb.answer("Готово")
+    try:
+        await cb.message.delete()
+    except TelegramAPIError:
+        pass
 
 
 # ---------- настройки ----------
@@ -490,19 +566,13 @@ async def baxi_here(bot: Bot, chat_id: int) -> bool:
 @router.message(Command("settings"))
 @router.message(F.chat.type.in_({"group", "supergroup"}), F.text.regexp(re.compile(r"^\s*настройки\s*$", re.I)))
 async def cmd_settings(message: Message, chat_row: dict, command: CommandObject | None = None) -> None:
-    """Настройки этого чата прямо в чате: та же карточка, что в личке, кнопки работают только у админов.
+    """Кнопка в личку, сразу в настройки этого чата: в самом чате настройки не показываем.
     Если в чате Бакси, голую /settings оставляем ему (тогда /settings@бот или слово «настройки»)."""
-    if message.chat.type not in ("group", "supergroup"):
-        return
     if command is not None and not command.mention and await baxi_here(message.bot, message.chat.id):
         return
     if perms.is_anon_admin(message) or not await perms.message_has(message, perms.R_SETTINGS):
         return
-    from guard.handlers import settings as st
-    text, markup = await st.card(message.bot, message.chat.id, message.from_user.id)
     me = await message.bot.me()
-    markup = st.for_group(markup, message.chat.id)
-    markup.inline_keyboard.append([InlineKeyboardButton(text="📲 Открыть в личке",
-                                                        url=f"https://t.me/{me.username}?start=s_{message.chat.id}")])
-    await out.answer(message, text, ttl=st.GROUP_TTL, markup=markup)
-    drop_command(message, chat_row)
+    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text="⚙️ Открыть настройки", url=f"https://t.me/{me.username}?start=s_{message.chat.id}", style="primary")]])
+    await done(message, chat_row, "настройки этого чата открываются в личке с ботом.", markup=markup)

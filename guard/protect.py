@@ -142,18 +142,18 @@ async def spam_reason(bot: Bot, chat: dict, message: Message, member: dict | Non
         own = (chat.get("username") or "").lower()
         for name in [m for m in mentions(message) if m and m != own][:3]:
             if await is_channel_or_bot(bot, name):
-                return "упоминание чужого канала или бота"
+                return "реклама стороннего канала или бота"
     if chat["spam_forwards"] and not edited and foreign_forward(message):
-        return "пересылка"
+        return "пересылка из стороннего источника"
     if chat["spam_buttons"] and has_link_buttons(message):
-        return "кнопки-ссылки"
+        return "сообщение с рекламными кнопками"
     if chat["spam_scam"]:
         why = scam_reason(text)
         if why:
             return why
     if chat["spam_ai"] and ai.enabled() and len(text) >= 15 and looks_suspicious(text):
         if await ai.is_spam(text):
-            return "похоже на спам (проверка нейросетью)"
+            return "признаки спама"
     return ""
 
 
@@ -162,7 +162,7 @@ async def stop_reason(chat: dict, message: Message) -> str:
         return ""
     words = await db.stopwords(chat["chat_id"])
     hit = find_stopword(message_text(message), words)
-    return f"стоп-слово \"{hit}\"" if hit else ""
+    return "недопустимая лексика" if hit else ""   # само слово в чат не повторяем
 
 
 # ---------- наказание ----------
@@ -290,7 +290,7 @@ async def on_join(bot: Bot, chat: dict, user: User) -> bool:
         chat = await db.get_chat(chat_id)
     if chat["attack_until"] > db.now():
         try:
-            await actions.kick(bot, chat, user.id, bot.id, "режим атаки", quiet=True)
+            await actions.kick(bot, chat, user.id, bot.id, "защита от массового вступления", quiet=True)
         except ActionError as exc:
             log.info("Режим атаки: не выгнал %s в %s: %s", user.id, chat_id, exc)
             return False

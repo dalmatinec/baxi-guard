@@ -102,6 +102,12 @@ async def my_status(event: ChatMemberUpdated, bot: Bot) -> None:
         out.spawn(commands.refresh_chat(bot, chat.id))  # меню команд создателю и ролям
     if now_in and not was_in:
         log.info("Добавили в чат %s %s", chat.id, chat.title)
+        from guard import chatinfo
+        row = await db.ensure_chat(chat.id, chat.title or "", chat.username or "")
+        try:
+            await chatinfo.send(bot, row)   # карточка: ID, доступ, версия, подписка
+        except Exception:
+            log.exception("Не отправил информацию о чате %s", chat.id)
         text = "подключена. Все автоматические защиты выключены, админы включают их в /settings."
         if new != "administrator":
             text += "\nЧтобы работать, мне нужны права администратора: " + ", ".join(perms.RIGHTS.values()) + "."
@@ -182,3 +188,24 @@ async def reset_nick(message: Message, chat_row: dict) -> None:
         return
     removed = await nicks.remove(target.id)
     await done(message, chat_row, f"ник {out.esc(out.full_name(target))} убран." if removed else "у него нет своего ника.")
+
+
+
+# ---------- информация о чате ----------
+
+INFO_WORDS = re.compile(r"^\s*(инфо|информация|/info(@\w+)?)\s*$", re.I)
+_info_last: dict[int, float] = {}
+
+
+@router.message(GROUP, F.text.regexp(INFO_WORDS))
+async def info_cmd(message: Message, chat_row: dict) -> None:
+    """Карточка чата для всех; участникам без роли не чаще раза в минуту на чат."""
+    from guard import chatinfo
+    if not message.from_user:
+        return
+    now = time.monotonic()
+    staff = await perms.has_any(message.bot, message.chat.id, message.from_user.id)
+    if not staff and now - _info_last.get(message.chat.id, 0) < 60:
+        return
+    _info_last[message.chat.id] = now
+    await chatinfo.send(message.bot, chat_row, reply_to=message)

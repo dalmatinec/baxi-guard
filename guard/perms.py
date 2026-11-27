@@ -44,9 +44,18 @@ RIGHT_NAMES = [(R_ADMIN, "👑", "админ бота"), (R_MUTE, "🔇", "му�
                (R_TRIGGERS, "🧩", "триггеры"), (R_SETTINGS, "⚙️", "настройки"), (R_GRANT, "🔑", "выдача прав")]
 ROLE_MOD_FLAGS = R_MUTE | R_WARN | R_BAN | R_CLEAN | R_GAMES | R_TRIGGERS
 OLD_MODS_FLAGS = ROLE_MOD_FLAGS
-OWNER, ADMIN, MOD, NONE = "owner", "admin", "mod", ""
-ROLE_TITLES = {OWNER: "👑 Владелец", ADMIN: "⭐ Админ", MOD: "🛡 Модератор", NONE: "участник"}
-ROLE_RANK = {NONE: 0, MOD: 1, ADMIN: 2, OWNER: 3}
+OWNER, ADMIN, MOD, JUNIOR, HOST, NONE = "owner", "admin", "mod", "junior", "host", ""
+# Роли в боте. Назначаются одной командой /role (ответом) с выбором роли. У каждой свои права:
+ROLES = {
+    ADMIN: ("⭐ Админ", R_ADMIN, "все права, назначает модераторов и ведущих"),
+    MOD: ("🛡 Модератор", ROLE_MOD_FLAGS, "мут, предупреждения, бан и кик, удаление и закреп, игры, триггеры"),
+    JUNIOR: ("🔰 Мл. модератор", R_MUTE | R_WARN | R_CLEAN, "мут, предупреждения, удаление и закреп"),
+    HOST: ("🎮 Ведущий игр", R_GAMES, "игры: запуск, ФК, топы, список, рандом"),
+}
+ROLE_TITLES = {OWNER: "👑 Владелец", **{k: v[0] for k, v in ROLES.items()}, NONE: "участник"}
+ROLE_RANK = {NONE: 0, HOST: 1, JUNIOR: 1, MOD: 2, ADMIN: 3, OWNER: 4}
+ROLE_WORDS = {"admin": ADMIN, "админ": ADMIN, "mod": MOD, "мод": MOD, "модератор": MOD, "junior": JUNIOR,
+              "младший": JUNIOR, "host": HOST, "ведущий": HOST, "none": NONE, "снять": NONE}
 
 
 def is_owner(user_id: int | None) -> bool:
@@ -149,7 +158,10 @@ async def is_staff(bot: Bot, chat_id: int, user_id: int) -> bool:
 def role_from_flags(f: int) -> str:
     if f & R_ADMIN:
         return ADMIN
-    return MOD if f else NONE
+    for key, (_title, flags, _about) in ROLES.items():
+        if f == flags:
+            return key
+    return MOD if f else NONE   # старые наборы галочек считаем модератором
 
 
 async def role(bot: Bot, chat_id: int, user_id: int) -> str:
@@ -159,7 +171,7 @@ async def role(bot: Bot, chat_id: int, user_id: int) -> str:
 
 
 def role_flags(r: str) -> int:
-    return {ADMIN: R_ADMIN, MOD: ROLE_MOD_FLAGS}.get(r, 0)
+    return ROLES[r][1] if r in ROLES else 0
 
 
 async def can_set_role(bot: Bot, chat_id: int, actor: int, target: int, new: str) -> str:
@@ -170,10 +182,20 @@ async def can_set_role(bot: Bot, chat_id: int, actor: int, target: int, new: str
     if me == OWNER:
         return ""
     if me != ADMIN:
-        return "назначать может только админ или владелец"
+        return "роли назначают только владелец и админ"
     if them == ADMIN or new == ADMIN:
         return "админов назначает и снимает только владелец"
     return ""
+
+
+async def roles_for(bot: Bot, chat_id: int, actor: int) -> list[str]:
+    """Какие роли actor может выдавать: владелец все, админ только ограниченные."""
+    me = await role(bot, chat_id, actor)
+    if me == OWNER:
+        return [ADMIN, MOD, JUNIOR, HOST]
+    if me == ADMIN:
+        return [MOD, JUNIOR, HOST]
+    return []
 
 
 async def set_role(chat_id: int, user_id: int, new: str, by_id: int) -> None:
@@ -183,9 +205,12 @@ async def set_role(chat_id: int, user_id: int, new: str, by_id: int) -> None:
 
 def rights_text(f: int) -> str:
     if f & R_ADMIN:
-        return "⭐ Админ"
+        return ROLES[ADMIN][0]
+    for _key, (title, flags, _about) in ROLES.items():
+        if f == flags:
+            return title
     if f and f & ROLE_MOD_FLAGS == f:
-        return "🛡 Модератор"
+        return ROLES[MOD][0]
     names = [f"{icon} {name}" for bit, icon, name in RIGHT_NAMES if bit != R_ADMIN and f & bit]
     return ", ".join(names) or "нет прав"
 
